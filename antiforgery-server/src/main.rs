@@ -6,7 +6,6 @@
 //! the only intended client.
 
 #![forbid(unsafe_code)]
-#![warn(clippy::pedantic)]
 #![allow(
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
