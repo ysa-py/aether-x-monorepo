@@ -83,6 +83,7 @@ pub mod runtime_preflight;
 pub mod seamless;
 pub mod shadow_socket;
 pub mod sni_whitelist;
+pub mod socket_error;
 pub mod sockops;
 pub mod ssh_tunnel;
 pub mod store_and_forward;

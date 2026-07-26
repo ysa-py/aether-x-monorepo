@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/aether-x/control-plane/internal/transport"
 )
 
 // NodeConfig holds the per-protocol connection parameters for a proxy node.
@@ -15,10 +17,11 @@ type NodeConfig struct {
 	ID         string `json:"id"`
 	Address    string `json:"address"` // IP or domain
 	Port       int    `json:"port"`
-	Protocol   string `json:"protocol"` // "vless", "vmess", "trojan", "shadowsocks"
-	UUID       string `json:"uuid"` // user UUID for vless/vmess
-	Password   string `json:"password,omitempty"` // for trojan/shadowsocks
-	Encryption string `json:"encryption,omitempty"` // "none" for vless
+	Protocol   string `json:"protocol"` // vless, vmess, trojan, shadowsocks, hysteria2, tuic
+	UUID       string `json:"uuid"` // user UUID for vless/vmess/tuic
+	Password   string `json:"password,omitempty"` // for trojan/shadowsocks/hysteria2/tuic
+	// Encryption is VLESS's encryption field or the Shadowsocks cipher/method.
+	Encryption string `json:"encryption,omitempty"`
 	Transport  string `json:"transport"` // tcp, kcp, ws, h2, grpc, httpupgrade, xhttp, quic, ...
 	Path       string `json:"path,omitempty"` // WebSocket / HTTP path
 	Host       string `json:"host,omitempty"` // WebSocket Host header / front domain
@@ -27,13 +30,22 @@ type NodeConfig struct {
 	Insecure   bool   `json:"insecure,omitempty"` // skip TLS verify (dev only)
 
 	// Transport-specific knobs (all optional; zero-value ⇒ sensible default):
-	ServiceName   string `json:"service_name,omitempty"` // gRPC serviceName
+	ServiceName         string `json:"service_name,omitempty"` // gRPC serviceName
 	// xhttp mode (packet-up/stream-up/stream-one); kcp uses HeaderType.
-	Mode          string `json:"mode,omitempty"`
-	HeaderType    string `json:"header_type,omitempty"` // kcp obfs / tcp(raw) http header
-	Seed          string `json:"seed,omitempty"` // kcp / xhttp seed
-	GRPCMultiMode bool   `json:"grpc_multi_mode,omitempty"` // gRPC gun multi-mode
-	Extra         string `json:"extra,omitempty"` // xhttp extra headers path
+	Mode                string `json:"mode,omitempty"`
+	HeaderType          string `json:"header_type,omitempty"` // kcp obfs / tcp(raw) http header
+	Seed                string `json:"seed,omitempty"` // kcp / xhttp seed
+	GRPCMultiMode       bool   `json:"grpc_multi_mode,omitempty"` // gRPC gun multi-mode
+	Extra               string `json:"extra,omitempty"` // xhttp extra headers path
+	// Flow is optional VLESS flow control (for example xtls-rprx-vision).
+	// It is emitted only when the reviewed node catalog explicitly sets it.
+	Flow                string `json:"flow,omitempty"`
+	// Native QUIC protocol settings. Hysteria2 requires reviewed bandwidth
+	// values; TUIC uses congestion control and UDP relay mode.
+	UpMbps              int    `json:"up_mbps,omitempty"`
+	DownMbps            int    `json:"down_mbps,omitempty"`
+	CongestionControl   string `json:"congestion_control,omitempty"`
+	UDPRelayMode        string `json:"udp_relay_mode,omitempty"`
 }
 
 // ProxyLinkConfig binds a subscriber's identity to a node's protocol params.
@@ -44,9 +56,58 @@ type ProxyLinkConfig struct {
 	Node     NodeConfig
 }
 
+// ValidateNodeConfig rejects node material that this repository cannot render
+// faithfully for a standard client. It is shared by the catalog admission path
+// and the admin preview endpoint so an administrator cannot be shown a config
+// that production would later reject.
+func ValidateNodeConfig(node NodeConfig) error {
+	if !supportedProtocol(node.Protocol) {
+		return fmt.Errorf("unsupported protocol %q", node.Protocol)
+	}
+	if !transport.IsValid(node.Transport) {
+		return fmt.Errorf("unsupported transport %q", node.Transport)
+	}
+	if !validPublishedHost(node.Address) {
+		return fmt.Errorf("invalid or placeholder address")
+	}
+	if node.Port < 1 || node.Port > 65535 {
+		return fmt.Errorf("invalid port")
+	}
+	if node.Insecure {
+		return fmt.Errorf("insecure TLS is not publishable")
+	}
+	if node.SNI != "" && !validPublishedHost(node.SNI) {
+		return fmt.Errorf("invalid or placeholder SNI")
+	}
+	if node.Host != "" && !validPublishedHost(node.Host) {
+		return fmt.Errorf("invalid or placeholder host")
+	}
+	if (node.Protocol == "vless" || node.Protocol == "vmess" || node.Protocol == "tuic") && strings.TrimSpace(node.UUID) == "" {
+		return fmt.Errorf("protocol %q requires a UUID", node.Protocol)
+	}
+	if (node.Protocol == "trojan" || node.Protocol == "shadowsocks" || node.Protocol == "hysteria2" || node.Protocol == "tuic") && strings.TrimSpace(node.Password) == "" {
+		return fmt.Errorf("protocol %q requires a password", node.Protocol)
+	}
+	if isNativeQUICProtocol(node.Protocol) {
+		if node.Transport != "quic" {
+			return fmt.Errorf("protocol %q requires transport quic", node.Protocol)
+		}
+		if node.Protocol == "hysteria2" && (node.UpMbps <= 0 || node.DownMbps <= 0) {
+			return fmt.Errorf("hysteria2 requires positive up_mbps and down_mbps")
+		}
+	}
+	if node.Flow != "" && node.Protocol != "vless" {
+		return fmt.Errorf("flow is supported only for vless")
+	}
+	if node.Protocol == "shadowsocks" && node.Transport != "tcp" && node.Transport != "raw" {
+		return fmt.Errorf("unsupported Shadowsocks transport %q without a plugin renderer", node.Transport)
+	}
+	return nil
+}
+
 // BuildProxyLink generates a standard share link (vless://, vmess://,
-// trojan://, ss://) for the given config. This is the core URI that every
-// proxy client on earth can import via paste or QR scan.
+// trojan://, ss://, hysteria2://, tuic://) for the given config. This is the
+// core URI that a compatible standard client can import via paste or QR scan.
 func BuildProxyLink(cfg ProxyLinkConfig) string {
 	switch cfg.Node.Protocol {
 	case "vless":
@@ -57,8 +118,15 @@ func BuildProxyLink(cfg ProxyLinkConfig) string {
 		return buildTrojanLink(cfg)
 	case "shadowsocks":
 		return buildSSLink(cfg)
+	case "hysteria2":
+		return buildHysteria2Link(cfg)
+	case "tuic":
+		return buildTuicLink(cfg)
 	default:
-		return buildVlessLink(cfg) // safe default
+		// Never relabel an unknown protocol as VLESS. A syntactically valid
+		// link for the wrong protocol is worse than an explicit empty result;
+		// verified catalog validation prevents this branch in production.
+		return ""
 	}
 }
 
@@ -145,12 +213,15 @@ func buildVlessLink(cfg ProxyLinkConfig) string {
 		}
 	}
 	params.Set("sni", ifEmpty(n.SNI, n.Address))
-	params.Set("fp", "chrome") // JA4 fingerprint camouflage
+	if n.Flow != "" {
+		params.Set("flow", n.Flow)
+	}
+	params.Set("fp", "chrome")
 	if n.ALPN != "" {
 		params.Set("alpn", n.ALPN)
 	}
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
-		n.UUID, n.Address, n.Port, params.Encode(), url.QueryEscape(cfg.Remark))
+		url.User(n.UUID).String(), n.Address, n.Port, params.Encode(), url.QueryEscape(cfg.Remark))
 }
 
 func buildVmessLink(cfg ProxyLinkConfig) string {
@@ -205,13 +276,44 @@ func buildTrojanLink(cfg ProxyLinkConfig) string {
 	params.Set("host", ifEmpty(n.Host, n.SNI))
 	params.Set("fp", "chrome")
 	return fmt.Sprintf("trojan://%s@%s:%d?%s#%s",
-		n.Password, n.Address, n.Port, params.Encode(), url.QueryEscape(cfg.Remark))
+		url.User(n.Password).String(), n.Address, n.Port, params.Encode(), url.QueryEscape(cfg.Remark))
+}
+
+func shadowsocksMethod(n NodeConfig) string {
+	return ifEmpty(n.Encryption, "chacha20-ietf-poly1305")
 }
 
 func buildSSLink(cfg ProxyLinkConfig) string {
 	n := cfg.Node
-	userinfo := base64.RawURLEncoding.EncodeToString([]byte("chacha20-ietf-poly1305:" + n.Password))
+	userinfo := base64.RawURLEncoding.EncodeToString([]byte(shadowsocksMethod(n) + ":" + n.Password))
 	return fmt.Sprintf("ss://%s@%s:%d#%s", userinfo, n.Address, n.Port, url.QueryEscape(cfg.Remark))
+}
+
+func nativeQUICParams(n NodeConfig) url.Values {
+	params := url.Values{}
+	params.Set("sni", ifEmpty(n.SNI, n.Address))
+	if n.ALPN != "" {
+		params.Set("alpn", n.ALPN)
+	}
+	return params
+}
+
+func buildHysteria2Link(cfg ProxyLinkConfig) string {
+	n := cfg.Node
+	params := nativeQUICParams(n)
+	params.Set("upmbps", fmt.Sprintf("%d", n.UpMbps))
+	params.Set("downmbps", fmt.Sprintf("%d", n.DownMbps))
+	return fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s",
+		url.User(n.Password).String(), n.Address, n.Port, params.Encode(), url.QueryEscape(cfg.Remark))
+}
+
+func buildTuicLink(cfg ProxyLinkConfig) string {
+	n := cfg.Node
+	params := nativeQUICParams(n)
+	params.Set("congestion_control", ifEmpty(n.CongestionControl, "bbr"))
+	params.Set("udp_relay_mode", ifEmpty(n.UDPRelayMode, "native"))
+	return fmt.Sprintf("tuic://%s@%s:%d?%s#%s",
+		url.UserPassword(n.UUID, n.Password).String(), n.Address, n.Port, params.Encode(), url.QueryEscape(cfg.Remark))
 }
 
 // needsPathHost reports whether a transport uses an HTTP/WS path + host.
@@ -225,8 +327,8 @@ func needsPathHost(t string) bool {
 }
 
 // BuildSubscriptionBodyEx generates the full subscription body from one or
-// more node configs. This is the enhanced version of BuildBody that uses
-// real node data instead of placeholders.
+// more node configs. This is the renderer used by the verified catalog path;
+// it uses real operator-provided node data rather than placeholders.
 func BuildSubscriptionBodyEx(cfgs []ProxyLinkConfig, format string) ([]byte, string) {
 	switch format {
 	case "clash":
@@ -241,10 +343,21 @@ func BuildSubscriptionBodyEx(cfgs []ProxyLinkConfig, format string) ([]byte, str
 func buildBase64FromNodes(cfgs []ProxyLinkConfig) []byte {
 	var links []string
 	for _, c := range cfgs {
-		links = append(links, BuildProxyLink(c))
+		if link := BuildProxyLink(c); link != "" {
+			links = append(links, link)
+		}
 	}
 	joined := strings.Join(links, "\n")
 	return []byte(base64.StdEncoding.EncodeToString([]byte(joined)))
+}
+
+// clashProtocol maps the internal protocol identifier to Clash/Mihomo's
+// published type name. In particular, the standard Shadowsocks type is `ss`.
+func clashProtocol(protocol string) string {
+	if protocol == "shadowsocks" {
+		return "ss"
+	}
+	return protocol
 }
 
 // clashNetwork maps a transport id to the Clash "network:" value.
@@ -284,24 +397,56 @@ func buildClashFromNodes(cfgs []ProxyLinkConfig) []byte {
 func writeClashProxy(sb *strings.Builder, name string, c ProxyLinkConfig) {
 	n := c.Node
 	sb.WriteString(fmt.Sprintf("  - name: %q\n", name))
-	sb.WriteString(fmt.Sprintf("    type: %s\n", n.Protocol))
-	sb.WriteString(fmt.Sprintf("    server: %s\n", n.Address))
+	if n.Protocol == "hysteria2" || n.Protocol == "tuic" {
+		writeClashNativeQUICProxy(sb, n)
+		return
+	}
+
+	sb.WriteString(fmt.Sprintf("    type: %q\n", clashProtocol(n.Protocol)))
+	sb.WriteString(fmt.Sprintf("    server: %q\n", n.Address))
 	sb.WriteString(fmt.Sprintf("    port: %d\n", n.Port))
 	if n.Protocol == "vless" || n.Protocol == "vmess" {
-		sb.WriteString(fmt.Sprintf("    uuid: %s\n", n.UUID))
+		sb.WriteString(fmt.Sprintf("    uuid: %q\n", n.UUID))
 	}
-	if n.Protocol == "vless" {
-		sb.WriteString("    flow: xtls-rprx-vision\n")
+	if n.Protocol == "vless" && n.Flow != "" {
+		sb.WriteString(fmt.Sprintf("    flow: %q\n", n.Flow))
 	}
 	if n.Protocol == "trojan" {
-		sb.WriteString(fmt.Sprintf("    password: %s\n", n.Password))
+		sb.WriteString(fmt.Sprintf("    password: %q\n", n.Password))
 	}
-	sb.WriteString(fmt.Sprintf("    network: %s\n", clashNetwork(n.Transport)))
+	if n.Protocol == "shadowsocks" {
+		sb.WriteString(fmt.Sprintf("    cipher: %q\n", shadowsocksMethod(n)))
+		sb.WriteString(fmt.Sprintf("    password: %q\n", n.Password))
+	}
+	sb.WriteString(fmt.Sprintf("    network: %q\n", clashNetwork(n.Transport)))
 	sb.WriteString("    tls: true\n")
-	sb.WriteString(fmt.Sprintf("    server-name: %s\n", ifEmpty(n.SNI, n.Address)))
+	sb.WriteString(fmt.Sprintf("    server-name: %q\n", ifEmpty(n.SNI, n.Address)))
 	sb.WriteString("    udp: true\n")
 
 	writeClashTransport(sb, n)
+}
+
+// writeClashNativeQUICProxy emits native Hysteria2/TUIC fields. These are
+// protocol outbounds, not a VLESS/Trojan stream transport, so they must not
+// inherit stream-only `network` or `tls` keys.
+func writeClashNativeQUICProxy(sb *strings.Builder, n NodeConfig) {
+	sb.WriteString(fmt.Sprintf("    type: %q\n", n.Protocol))
+	sb.WriteString(fmt.Sprintf("    server: %q\n", n.Address))
+	sb.WriteString(fmt.Sprintf("    port: %d\n", n.Port))
+	sb.WriteString(fmt.Sprintf("    sni: %q\n", ifEmpty(n.SNI, n.Address)))
+	sb.WriteString("    skip-cert-verify: false\n")
+	sb.WriteString("    udp: true\n")
+	switch n.Protocol {
+	case "hysteria2":
+		sb.WriteString(fmt.Sprintf("    password: %q\n", n.Password))
+		sb.WriteString(fmt.Sprintf("    up: %d\n", n.UpMbps))
+		sb.WriteString(fmt.Sprintf("    down: %d\n", n.DownMbps))
+	case "tuic":
+		sb.WriteString(fmt.Sprintf("    uuid: %q\n", n.UUID))
+		sb.WriteString(fmt.Sprintf("    password: %q\n", n.Password))
+		sb.WriteString(fmt.Sprintf("    congestion-controller: %q\n", ifEmpty(n.CongestionControl, "bbr")))
+		sb.WriteString(fmt.Sprintf("    udp-relay-mode: %q\n", ifEmpty(n.UDPRelayMode, "native")))
+	}
 }
 
 // writeClashTransport writes the transport-specific *-opts block.
@@ -327,7 +472,7 @@ func writeClashTransport(sb *strings.Builder, n NodeConfig) {
 		sb.WriteString(fmt.Sprintf("      headers:\n        Host:\n          - %q\n", host))
 	case "kcp":
 		sb.WriteString("    kcp-opts:\n")
-		sb.WriteString(fmt.Sprintf("      header-type: %s\n", ifEmpty(n.HeaderType, "none")))
+		sb.WriteString(fmt.Sprintf("      header-type: %q\n", ifEmpty(n.HeaderType, "none")))
 	case "httpupgrade":
 		sb.WriteString("    httpupgrade-opts:\n")
 		sb.WriteString(fmt.Sprintf("      host: %q\n", host))
@@ -337,7 +482,7 @@ func writeClashTransport(sb *strings.Builder, n NodeConfig) {
 		sb.WriteString("    xhttp-opts:\n")
 		sb.WriteString(fmt.Sprintf("      host: %q\n", host))
 		sb.WriteString(fmt.Sprintf("      path: %q\n", path))
-		sb.WriteString(fmt.Sprintf("      mode: %s\n", ifEmpty(n.Mode, "auto")))
+		sb.WriteString(fmt.Sprintf("      mode: %q\n", ifEmpty(n.Mode, "auto")))
 	case "quic":
 		sb.WriteString("    quic-opts:\n")
 		sb.WriteString(fmt.Sprintf("      host: %q\n", host))
@@ -348,15 +493,20 @@ func writeClashTransport(sb *strings.Builder, n NodeConfig) {
 
 func buildSingboxFromNodes(cfgs []ProxyLinkConfig) []byte {
 	type outbound struct {
-		Type       string         `json:"type"`
-		Tag        string         `json:"tag"`
-		Server     string         `json:"server"`
-		ServerPort int            `json:"server_port"`
-		UUID       string         `json:"uuid,omitempty"`
-		Password   string         `json:"password,omitempty"`
-		Flow       string         `json:"flow,omitempty"`
-		Transport  map[string]any `json:"transport,omitempty"`
-		TLS        map[string]any `json:"tls,omitempty"`
+		Type              string         `json:"type"`
+		Tag               string         `json:"tag"`
+		Server            string         `json:"server"`
+		ServerPort        int            `json:"server_port"`
+		UUID              string         `json:"uuid,omitempty"`
+		Password          string         `json:"password,omitempty"`
+		Method            string         `json:"method,omitempty"`
+		Flow              string         `json:"flow,omitempty"`
+		UpMbps            int            `json:"up_mbps,omitempty"`
+		DownMbps          int            `json:"down_mbps,omitempty"`
+		CongestionControl string         `json:"congestion_control,omitempty"`
+		UDPRelayMode      string         `json:"udp_relay_mode,omitempty"`
+		Transport         map[string]any `json:"transport,omitempty"`
+		TLS               map[string]any `json:"tls,omitempty"`
 	}
 	var outbounds []outbound
 	for i, c := range cfgs {
@@ -373,14 +523,25 @@ func buildSingboxFromNodes(cfgs []ProxyLinkConfig) []byte {
 			Transport:  singboxTransport(n),
 			TLS:        singboxTLS(n),
 		}
-		if n.Protocol == "vless" || n.Protocol == "vmess" {
+		if n.Protocol == "vless" || n.Protocol == "vmess" || n.Protocol == "tuic" {
 			ob.UUID = n.UUID
 		}
-		if n.Protocol == "vless" {
-			ob.Flow = "xtls-rprx-vision"
+		if n.Protocol == "vless" && n.Flow != "" {
+			ob.Flow = n.Flow
 		}
-		if n.Protocol == "trojan" {
+		if n.Protocol == "trojan" || n.Protocol == "shadowsocks" || n.Protocol == "hysteria2" || n.Protocol == "tuic" {
 			ob.Password = n.Password
+		}
+		if n.Protocol == "shadowsocks" {
+			ob.Method = shadowsocksMethod(n)
+		}
+		if n.Protocol == "hysteria2" {
+			ob.UpMbps = n.UpMbps
+			ob.DownMbps = n.DownMbps
+		}
+		if n.Protocol == "tuic" {
+			ob.CongestionControl = ifEmpty(n.CongestionControl, "bbr")
+			ob.UDPRelayMode = ifEmpty(n.UDPRelayMode, "native")
 		}
 		outbounds = append(outbounds, ob)
 	}
@@ -394,6 +555,11 @@ func buildSingboxFromNodes(cfgs []ProxyLinkConfig) []byte {
 
 // singboxTransport returns the sing-box transport object for a node.
 func singboxTransport(n NodeConfig) map[string]any {
+	// Hysteria2 and TUIC are native QUIC outbounds in sing-box. Their QUIC
+	// parameters live on the outbound itself, not in a VLESS-style transport.
+	if n.Protocol == "hysteria2" || n.Protocol == "tuic" {
+		return nil
+	}
 	path := ifEmpty(n.Path, "/sub")
 	host := ifEmpty(n.Host, n.SNI)
 	switch n.Transport {
@@ -428,6 +594,10 @@ func singboxTLS(n NodeConfig) map[string]any {
 	}
 	if n.ALPN != "" {
 		tls["alpn"] = []string{n.ALPN}
+	} else if n.Protocol == "hysteria2" || n.Protocol == "tuic" {
+		// Native QUIC clients negotiate HTTP/3 by default; stream transports
+		// retain the TLS-over-TCP ALPN default below.
+		tls["alpn"] = []string{"h3"}
 	} else {
 		tls["alpn"] = []string{"h2", "http/1.1"}
 	}

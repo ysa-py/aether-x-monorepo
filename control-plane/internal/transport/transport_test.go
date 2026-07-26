@@ -73,7 +73,7 @@ func TestIsValidAndIDs(t *testing.T) {
 
 func TestProtocols(t *testing.T) {
 	ps := Protocols()
-	want := map[string]bool{"vless": true, "vmess": true, "trojan": true, "shadowsocks": true}
+	want := map[string]bool{"vless": true, "vmess": true, "trojan": true, "shadowsocks": true, "hysteria2": true, "tuic": true}
 	seen := map[string]bool{}
 	for _, p := range ps {
 		seen[p.ID] = true

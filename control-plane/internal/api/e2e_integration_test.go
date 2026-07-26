@@ -36,11 +36,39 @@ func setupIntegrationServer(t *testing.T) *Server {
 	engine := clientengine.Default()
 	discovery := clientengine.NewClientDiscovery(engine, "")
 
+	// The E2E path uses the same verified-catalog renderer as production. This
+	// keeps test coverage honest: no placeholder endpoint is ever required to
+	// exercise a standard-client subscription response.
+	catalog, err := subendpoint.NewNodeCatalog(subendpoint.CatalogDocument{
+		Version: "e2e-catalog-v1",
+		Nodes: []subendpoint.CatalogNode{{
+			NodeConfig: subendpoint.NodeConfig{
+				ID:        "e2e-verified-node",
+				Address:   "203.0.113.42",
+				Port:      443,
+				Protocol:  "vless",
+				UUID:      "e2e-operator-credential",
+				Transport: "ws",
+				Path:      "/edge",
+				Host:      "cdn.operator.test",
+				SNI:       "cdn.operator.test",
+			},
+			Enabled: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create verified E2E node catalog: %v", err)
+	}
+	dynamicSubs, err := subendpoint.NewCatalogSubscriptionService(catalog)
+	if err != nil {
+		t.Fatalf("create verified E2E subscription service: %v", err)
+	}
+
 	srv := &Server{
-		SubStore:               &subStoreAdapter{store: memStore},
-		ClientEngine:           &clientEngineAdapter{engine: engine},
-		Build:                  "e2e-test",
-		AllowLegacyPlaceholder: true, // isolated fixture; production must use catalog nodes
+		SubStore:     &subStoreAdapter{store: memStore},
+		ClientEngine: &clientEngineAdapter{engine: engine},
+		DynamicSubs:  dynamicSubs,
+		Build:        "e2e-test",
 	}
 	_ = discovery // wired into request path in production
 
@@ -147,7 +175,7 @@ func TestE2E_ColdStart_SubscriptionFetch(t *testing.T) {
 
 func TestE2E_SubscriptionFailsClosedWithoutVerifiedCatalog(t *testing.T) {
 	srv := setupIntegrationServer(t)
-	srv.AllowLegacyPlaceholder = false
+	srv.DynamicSubs = nil
 
 	req := httptest.NewRequest(http.MethodGet, "/sub/demo-token-aether-x-2026", nil)
 	req.Header.Set("User-Agent", "v2rayNG/1.8.0")

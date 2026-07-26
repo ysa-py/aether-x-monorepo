@@ -95,10 +95,12 @@ only moves the failure to the client.
 A strict, operator-managed `NodeCatalog` now validates real endpoint material
 before rendering standard base64 links, Clash/Mihomo YAML, or sing-box JSON.
 Production delivery stays disabled without a catalog or with no node compatible
-with the requesting client. The test-only placeholder renderer is explicitly
-blocked in a normal `api.Server`. Once enabled, a content-fingerprinted reload
-loop validates a complete replacement before atomically swapping it; invalid or
-partial updates retain the last known-good catalog. A separate opt-in production
+with the requesting client. The former test-only placeholder renderer was
+removed; unit and E2E coverage now uses verified test catalogs with
+non-routable documentation-range addresses. Once enabled, a
+content-fingerprinted reload loop validates a complete replacement before
+atomically swapping it; invalid or partial updates retain the last known-good
+catalog. A separate opt-in production
 ClickHouse reader can reorder only verified catalog entries from aggregate
 per-node RTT, loss, RST, and throughput evidence; reader failure returns to the
 deterministic catalog order. It does not fabricate an ISP/region label when no

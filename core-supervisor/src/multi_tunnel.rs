@@ -184,11 +184,11 @@ impl TunnelCascade {
         Ok(buf)
     }
 
-    /// Round-trips the payload; panics on any framing error (test/CI helper).
-    #[must_use]
-    pub fn roundtrip(&self, payload: &[u8]) -> Vec<u8> {
+    /// Round-trips the payload through the cascade. Structural framing errors
+    /// are returned to the caller; this helper must never convert a malformed
+    /// frame into a process panic.
+    pub fn roundtrip(&self, payload: &[u8]) -> Result<Vec<u8>, CascadeError> {
         self.decapsulate(&self.encapsulate(payload))
-            .expect("cascade round-trip must be lossless")
     }
 
     /// Mid-stream hop: swap the transport carrying subsequent frames **without**
@@ -244,8 +244,8 @@ mod tests {
     #[test]
     fn roundtrip_helper_is_lossless() {
         let c = TunnelCascade::iran_resilient_default();
-        assert_eq!(c.roundtrip(b"hello"), b"hello");
-        assert_eq!(c.roundtrip(&[]), Vec::<u8>::new());
+        assert_eq!(c.roundtrip(b"hello"), Ok(b"hello".to_vec()));
+        assert_eq!(c.roundtrip(&[]), Ok(Vec::<u8>::new()));
     }
 
     #[test]
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(n, 1);
         assert_eq!(c.active_transport(), "dns-tunnel-masterdns".to_string());
         // Payload still encapsulates/decapsulates identically after the hop.
-        assert_eq!(c.roundtrip(b"post-hop data"), b"post-hop data");
+        assert_eq!(c.roundtrip(b"post-hop data"), Ok(b"post-hop data".to_vec()));
         let _ = c.hop("webtunnel");
         assert_eq!(c.hop_count(), 2);
     }

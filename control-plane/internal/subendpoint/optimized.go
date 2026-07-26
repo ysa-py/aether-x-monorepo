@@ -2,97 +2,51 @@ package subendpoint
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/aether-x/control-plane/internal/telemetry"
 )
 
-// OptimizedNodeConfig builds NodeConfig from NodeScore
-func OptimizedNodeConfig(ns telemetry.NodeScore, userID string) NodeConfig {
-	// Map NodeScore to NodeConfig for subscription building
-	// Use realistic address formatting
-	return NodeConfig{
-		ID:       ns.NodeID,
-		Address:  fmt.Sprintf("%s.aether-x.example", ns.NodeID),
-		Port:     443,
-		Protocol: mapProtocol(ns.Protocol),
-		UUID:     userID, // user's UUID
-		Transport: mapTransport(ns.Transport),
-		SNI:      fmt.Sprintf("%s.aether-x.example", ns.NodeID),
-		Host:     "www.digikala.com", // front domain for domain fronting
-		Path:     fmt.Sprintf("/%s", ns.NodeID),
-	}
-}
-
-func mapProtocol(p string) string {
-	switch p {
-	case "hysteria2", "tuic", "tuic-v5":
-		// These are transported as vless over quic in subscription for compatibility
-		// Real Hysteria2/TUIC configs need special JSON, handled in singbox builder
-		return p
-	case "vless", "vmess", "trojan", "shadowsocks":
-		return p
-	default:
-		return "vless"
-	}
-}
-
-func mapTransport(t string) string {
-	switch t {
-	case "xhttp", "splithttp":
-		return "xhttp"
-	case "grpc", "ws", "httpupgrade", "quic", "tcp", "kcp", "h2", "http":
-		return t
-	default:
-		return "xhttp"
-	}
-}
-
-// DynamicOptimizerService wraps telemetry.Optimizer to produce subscription bodies
+// DynamicOptimizerService is retained as an advisory compatibility seam for
+// callers that still construct telemetry.Optimizer directly. It deliberately
+// cannot publish subscriptions: score records have no operator-verified
+// address, credential, SNI, or client allow-list. Production publication is
+// provided by TelemetryCatalogSubscriptionService, which can reorder only an
+// already-verified catalog.
 type DynamicOptimizerService struct {
 	optimizer *telemetry.Optimizer
 }
 
+// NewDynamicOptimizerService creates an advisory-only optimizer. New
+// production code must use NewTelemetryCatalogSubscriptionService with a
+// ReloadingCatalogSubscriptionService instead.
 func NewDynamicOptimizerService(opt *telemetry.Optimizer) *DynamicOptimizerService {
 	return &DynamicOptimizerService{optimizer: opt}
 }
 
-// BuildOptimizedSubscription generates subscription body dynamically evaluating ClickHouse telemetry
-// Returns body, content-type, and debug reason
-func (s *DynamicOptimizerService) BuildOptimizedSubscription(ctx context.Context, sub *SubscriptionData, clientCtx telemetry.ClientContext, format string) ([]byte, string, string, error) {
-	profile, err := s.optimizer.Optimize(ctx, clientCtx)
-	if err != nil {
-		// Fallback to default single node if optimization fails
-		return BuildBody(sub, format), "text/plain; charset=utf-8", "fallback - optimization failed: " + err.Error(), nil
+// BuildOptimizedSubscription computes score evidence only long enough to
+// confirm whether telemetry is available, then fails closed. NodeScore contains
+// aggregate reachability data, not endpoint material, and must never be turned
+// into a fabricated address or a placeholder subscription link.
+func (s *DynamicOptimizerService) BuildOptimizedSubscription(
+	ctx context.Context,
+	sub *SubscriptionData,
+	clientCtx telemetry.ClientContext,
+	_ string,
+) ([]byte, string, string, error) {
+	if s == nil || s.optimizer == nil {
+		return nil, "", "telemetry optimizer is unavailable; verified catalog required", ErrNoCompatibleNodes
 	}
-
-	// Build ProxyLinkConfigs from optimized nodes
-	var cfgs []ProxyLinkConfig
-	for i, ns := range profile.Nodes {
-		nodeCfg := OptimizedNodeConfig(ns, sub.UserID)
-		// Remark includes geo and score for transparency
-		remark := fmt.Sprintf("Aether-X %s [%s] %.0f%%", ns.Region, ns.Transport, ns.SuccessRate*100)
-		if i == 0 {
-			remark = "⭐ " + remark // best node marked
-		}
-		cfgs = append(cfgs, ProxyLinkConfig{
-			UserID:   sub.UserID,
-			Remark:   remark,
-			FragPath: "sub",
-			Node:     nodeCfg,
-		})
+	if sub == nil || sub.UserID == "" {
+		return nil, "", "subscription identity is required", ErrNoCompatibleNodes
 	}
-
-	if len(cfgs) == 0 {
-		return BuildBody(sub, format), "text/plain; charset=utf-8", "fallback - no optimized nodes", nil
+	if _, err := s.optimizer.Optimize(ctx, clientCtx); err != nil {
+		return nil, "", "telemetry optimizer unavailable; verified catalog required", ErrNoCompatibleNodes
 	}
-
-	body, ct := BuildSubscriptionBodyEx(cfgs, format)
-	return body, ct, profile.Reason, nil
+	return nil, "", "telemetry scores are advisory; verified catalog required for endpoint publication", ErrNoCompatibleNodes
 }
 
-// GeoRoutedProfileResult holds optimized body + metadata for API response
+// GeoRoutedProfileResult holds a rendered verified-catalog body plus metadata.
 type GeoRoutedProfileResult struct {
 	Body        []byte
 	ContentType string
@@ -101,25 +55,22 @@ type GeoRoutedProfileResult struct {
 	GeneratedAt time.Time
 }
 
-// BuildGeoRouted handles the full flow: detect client context from UA/IP, optimize, build
-func (s *DynamicOptimizerService) BuildGeoRouted(ctx context.Context, sub *SubscriptionData, userAgent string, clientIP string, format string) (*GeoRoutedProfileResult, error) {
+// BuildGeoRouted is intentionally fail-closed for the advisory optimizer. A
+// caller must use CatalogSubscriptionService or
+// TelemetryCatalogSubscriptionService to publish standard client configs.
+func (s *DynamicOptimizerService) BuildGeoRouted(
+	ctx context.Context,
+	sub *SubscriptionData,
+	userAgent string,
+	clientIP string,
+	format string,
+) (*GeoRoutedProfileResult, error) {
 	clientCtx := DetectClientContext(userAgent, clientIP)
-	body, ct, reason, err := s.BuildOptimizedSubscription(ctx, sub, clientCtx, format)
+	_, _, _, err := s.BuildOptimizedSubscription(ctx, sub, clientCtx, format)
 	if err != nil {
 		return nil, err
 	}
-	profile, _ := s.optimizer.Optimize(ctx, clientCtx)
-	nodes := 0
-	if profile != nil {
-		nodes = len(profile.Nodes)
-	}
-	return &GeoRoutedProfileResult{
-		Body:        body,
-		ContentType: ct,
-		Reason:      reason,
-		Nodes:       nodes,
-		GeneratedAt: time.Now(),
-	}, nil
+	return nil, ErrNoCompatibleNodes
 }
 
 // DetectClientContext infers only client-core and platform capabilities from a
@@ -145,7 +96,7 @@ func DetectClientContext(userAgent string, clientIP string) telemetry.ClientCont
 	case contains(uaLower, "v2ray"), contains(uaLower, "hiddify"):
 		ctx.Core = "xray-core"
 	default:
-		ctx.Core = "sing-box" // default best
+		ctx.Core = "sing-box"
 	}
 
 	// Platform
@@ -169,7 +120,7 @@ func DetectClientContext(userAgent string, clientIP string) telemetry.ClientCont
 	// Transport preference based on core
 	switch ctx.Core {
 	case "sing-box", "nekobox":
-		ctx.TransportPreference = "xhttp" // newest, best anti-DPI
+		ctx.TransportPreference = "xhttp"
 	case "clash-meta":
 		ctx.TransportPreference = "ws"
 	default:

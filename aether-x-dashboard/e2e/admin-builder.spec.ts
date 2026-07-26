@@ -12,15 +12,21 @@ import { collectPageErrors, mockBuildConfig, mockTransports } from "./mocks";
 
 const ALL_TRANSPORTS = ["xhttp", "httpupgrade", "grpc", "h2", "ws", "kcp", "tcp", "quic"];
 
-// The fallback catalog has 4 entries; the live /v1/transports catalog has 8.
-// Waiting for >4 options proves the catalog fetch resolved before we assert —
-// this kills the engine-dependent race where Chromium/WebKit read the dropdown
+// The fallback catalog has 5 transports; the live /v1/transports catalog has 8.
+// Waiting for >5 options proves the catalog fetch resolved before we assert —
+// this kills the engine-dependent race where Chromium/Firefox read the dropdown
 // before the async fetch completed.
 async function waitForCatalog(page: import("@playwright/test").Page) {
   const select = page.getByTestId("transport-select");
   await expect
     .poll(async () => await select.locator("option").count(), { timeout: 7_000 })
-    .toBeGreaterThan(4);
+    .toBeGreaterThan(5);
+}
+
+async function fillReviewedEndpoint(page: import("@playwright/test").Page) {
+  await page.getByTestId("address-input").fill("198.51.100.42");
+  const uuid = page.getByTestId("uuid-input");
+  if (await uuid.count()) await uuid.fill("0d1f2e3a-4b5c-6d7e-8f90-12345678abcd");
 }
 
 test.describe("Admin Config Builder", () => {
@@ -35,6 +41,15 @@ test.describe("Admin Config Builder", () => {
     }
     await mockTransports(page);
     await mockBuildConfig(page);
+  });
+
+  test("requires reviewed endpoint material instead of a fictional default", async ({ page }) => {
+    await page.goto("/admin/builder");
+    await waitForCatalog(page);
+    await expect(page.getByTestId("build-btn")).toBeDisabled();
+
+    await fillReviewedEndpoint(page);
+    await expect(page.getByTestId("build-btn")).toBeEnabled();
   });
 
   test("loads catalog, renders RGB cards, and builds an xhttp config", async ({ page }) => {
@@ -58,7 +73,8 @@ test.describe("Admin Config Builder", () => {
     // xhttp is selected by default → description shows "Newest".
     await expect(page.getByTestId("transport-desc")).toContainText(/Newest|جدیدترین/);
 
-    // Build with the default (xhttp).
+    // Build with an explicit reviewed test endpoint, never a UI placeholder.
+    await fillReviewedEndpoint(page);
     await page.getByTestId("build-btn").click();
 
     // Result appears with the share link reflecting type=xhttp.
@@ -79,6 +95,7 @@ test.describe("Admin Config Builder", () => {
       await waitForCatalog(page);
 
       await transportSelect.selectOption(tr);
+      await fillReviewedEndpoint(page);
       await page.getByTestId("build-btn").click();
 
       const output = page.getByTestId("config-output");
@@ -98,11 +115,34 @@ test.describe("Admin Config Builder", () => {
   test("copies the generated share link with a confirmation", async ({ page }) => {
     await page.goto("/admin/builder");
     await waitForCatalog(page);
+    await fillReviewedEndpoint(page);
     await page.getByTestId("build-btn").click();
     await expect(page.getByTestId("config-output")).toContainText("type=xhttp");
 
     await page.getByTestId("copy-share").click();
     // Button flips to "Copied" confirmation text.
     await expect(page.getByTestId("copy-share")).toContainText(/کپی شد|Copied/);
+  });
+
+  test("builds native Hysteria2 and TUIC profiles without a custom client", async ({ page }) => {
+  await page.goto("/admin/builder");
+  await waitForCatalog(page);
+
+  const protocolSelect = page.getByTestId("protocol-select");
+  const transportSelect = page.getByTestId("transport-select");
+
+  await protocolSelect.selectOption("hysteria2");
+  await expect(transportSelect).toHaveValue("quic");
+  await fillReviewedEndpoint(page);
+  await page.getByTestId("password-input").fill("hy2-test-password");
+  await page.getByTestId("build-btn").click();
+  await expect(page.getByTestId("config-output")).toContainText("hysteria2://");
+
+  await protocolSelect.selectOption("tuic");
+  await expect(transportSelect).toHaveValue("quic");
+  await page.getByTestId("uuid-input").fill("tuic-test-uuid");
+  await page.getByTestId("password-input").fill("tuic-test-password");
+  await page.getByTestId("build-btn").click();
+  await expect(page.getByTestId("config-output")).toContainText("tuic://");
   });
 });

@@ -124,9 +124,15 @@ impl MerkleTree {
             // Pad odd levels by duplicating the last node (kept in `levels`
             // too, so proof siblings resolve correctly).
             if cur.len() % 2 == 1 {
-                let last = *cur.last().expect("non-empty because len is odd and > 1");
-                cur.push(last);
-                levels.last_mut().expect("level0 was pushed").push(last);
+                // `cur.len() > 1` guarantees a last element here, but retain a
+                // total-function implementation rather than encoding that
+                // invariant as a process panic.
+                if let Some(last) = cur.last().copied() {
+                    cur.push(last);
+                    if let Some(level) = levels.last_mut() {
+                        level.push(last);
+                    }
+                }
             }
             let mut next: Vec<[u8; 32]> = Vec::with_capacity(cur.len() / 2);
             for pair in cur.chunks(2) {

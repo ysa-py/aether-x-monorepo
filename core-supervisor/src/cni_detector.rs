@@ -69,7 +69,10 @@ impl CniDetector {
     /// Detect CNI type from interface name
     #[must_use]
     pub fn detect_cni(&self, iface: &str) -> CniType {
-        if iface.starts_with("veth") {
+        if iface.starts_with("veth") || iface.starts_with("cali") || iface.starts_with("flannel") {
+            // Kubernetes CNIs commonly expose host-side veth names as cali*
+            // or flannel*. Treat all three as virtual links so the selector
+            // never claims unsupported driver-mode XDP.
             CniType::Veth
         } else if iface.starts_with("br-") || iface == "docker0" {
             CniType::Bridge
@@ -147,6 +150,8 @@ mod tests {
     fn detect_veth() {
         let det = CniDetector::new();
         assert_eq!(det.detect_cni("veth123abc"), CniType::Veth);
+        assert_eq!(det.detect_cni("cali123abc"), CniType::Veth);
+        assert_eq!(det.detect_cni("flannel.1"), CniType::Veth);
         assert_eq!(det.detect_cni("br-abc"), CniType::Bridge);
         assert_eq!(det.detect_cni("eth0"), CniType::Unknown);
     }

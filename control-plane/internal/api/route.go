@@ -27,7 +27,7 @@ func (s *Server) routeDestination(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	resp, err := s.Route(ctx, domain, ip)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeDependencyFailure(w, "routing service unavailable")
 		return
 	}
 	action := routeActionString(resp.GetAction())

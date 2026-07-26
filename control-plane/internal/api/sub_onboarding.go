@@ -76,19 +76,9 @@ func (s *Server) serveSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.AllowLegacyPlaceholder {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "verified subscription node catalog is not configured",
-		})
-		return
-	}
-
-	// Explicit test/dev fixture only. Production must use DynamicSubs backed by
-	// a verified catalog so it never returns this placeholder path.
-	body, contentType := subendpoint.BuildBody(sub, format)
-	subendpoint.ApplySubscriptionHeaders(w, sub)
-	w.Header().Set("Content-Type", contentType)
-	w.Write(body)
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"error": "verified subscription node catalog is not configured",
+	})
 }
 
 // renderOnboardingPage serves a minimal HTML page for browser visitors.

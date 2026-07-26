@@ -268,14 +268,20 @@ services:
             credentials: []
           health_check:
             type: http
-            path: /healthz
+            path: /readyz
             port: 8080
+            initial_delay: 10
             interval: 10
-            timeout: 5
+            timeout: 3
             retries: 3
       secret_groups:
         - aether-secrets
       environment:
+        # AETHER_HTTP_ADDR is the executable's authoritative listener value.
+        # AETHER_ENV/AETHER_PORT are deployment metadata for the platform and
+        # external probes; never use them to weaken the explicit listener.
+        AETHER_ENV: "production"
+        AETHER_PORT: "8080"
         AETHER_HTTP_ADDR: "0.0.0.0:8080"
         AETHER_SUPERVISOR_ADDR: "core-supervisor:7070"
         AETHER_ANTIFORGERY_ADDR: "antiforgery-server:7071"
@@ -322,7 +328,10 @@ services:
         # ── Out-of-Band Distribution ──
         AETHER_ENABLE_OOB: "true"
         AETHER_OOB_CHANNELS: "dns-txt,doh-txt,ipfs,arweave,telegram-webhook"
-        AETHER_OOB_DNS_DOMAIN: "aether-x.example"
+        # Must be supplied by the operator as a real controlled domain before
+        # OOB delivery is enabled. An empty value disables DNS OOB rather than
+        # publishing a placeholder destination.
+        AETHER_OOB_DNS_DOMAIN: ""
         AETHER_OOB_TELEGRAM_CHAT: ""
         # ── Telemetry Engine ──
         AETHER_ENABLE_TELEMETRY_ENGINE: "true"

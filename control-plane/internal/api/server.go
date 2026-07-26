@@ -58,10 +58,6 @@ type Server struct {
 	// an operator-managed node catalog; a simulated telemetry optimizer must not
 	// manufacture a destination address for this interface.
 	DynamicSubs DynamicSubProvider
-	// AllowLegacyPlaceholder exists only for isolated tests and local fixtures.
-	// It must stay false in every production Server so a client never receives
-	// a syntactically valid but non-routable example endpoint.
-	AllowLegacyPlaceholder bool
 	// Sessions exposes durable/cache-backed migration state to privileged
 	// operational endpoints. It is nil only in isolated API fixtures.
 	Sessions *store.SessionManager
@@ -158,6 +154,10 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
+func writeDependencyFailure(w http.ResponseWriter, publicMessage string) {
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": publicMessage})
+}
+
 func (s *Server) listCores(w http.ResponseWriter, r *http.Request) {
 	if s.SupervisorCores == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no-supervisor"})
@@ -165,7 +165,7 @@ func (s *Server) listCores(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.SupervisorCores()
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeDependencyFailure(w, "supervisor service unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

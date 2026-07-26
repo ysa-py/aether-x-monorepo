@@ -69,19 +69,19 @@ func TestApplySubscriptionHeaders(t *testing.T) {
 	if su == "" {
 		t.Fatal("Subscription-Userinfo header missing")
 	}
-	if !contains(su, "download=1000000000") {
+	if !testContains(su, "download=1000000000") {
 		t.Errorf("Subscription-Userinfo missing download: %s", su)
 	}
-	if !contains(su, "total=10000000000") {
+	if !testContains(su, "total=10000000000") {
 		t.Errorf("Subscription-Userinfo missing total: %s", su)
 	}
-	if !contains(su, "expire=2000000000") {
+	if !testContains(su, "expire=2000000000") {
 		t.Errorf("Subscription-Userinfo missing expire: %s", su)
 	}
 
 	// Profile-Title must be valid base64
 	pt := w.Header().Get("Profile-Title")
-	if pt == "" || !contains(pt, "base64:") {
+	if pt == "" || !testContains(pt, "base64:") {
 		t.Errorf("Profile-Title invalid: %s", pt)
 	}
 
@@ -98,38 +98,7 @@ func TestApplySubscriptionHeaders(t *testing.T) {
 	}
 }
 
-func TestBuildBody(t *testing.T) {
-	sub := &SubscriptionData{UserID: "test-user-001"}
-
-	// base64 format
-	body, ct := BuildBody(sub, "base64")
-	if ct != "text/plain; charset=utf-8" {
-		t.Errorf("base64 content-type: %s", ct)
-	}
-	if len(body) == 0 {
-		t.Error("base64 body empty")
-	}
-
-	// clash format
-	body, ct = BuildBody(sub, "clash")
-	if ct != "text/yaml; charset=utf-8" {
-		t.Errorf("clash content-type: %s", ct)
-	}
-	if !contains(string(body), "proxies:") {
-		t.Error("clash body missing proxies section")
-	}
-
-	// singbox format
-	body, ct = BuildBody(sub, "singbox")
-	if ct != "application/json; charset=utf-8" {
-		t.Errorf("singbox content-type: %s", ct)
-	}
-	if !contains(string(body), "outbounds") {
-		t.Error("singbox body missing outbounds")
-	}
-}
-
-func contains(s, sub string) bool {
+func testContains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || indexOfStr(s, sub) >= 0)
 }
 

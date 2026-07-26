@@ -65,7 +65,7 @@ func (s *Server) issueSubscription(w http.ResponseWriter, r *http.Request) {
 		ExpiresUnix:    req.ExpiresUnix,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeDependencyFailure(w, "anti-forgery service unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -101,7 +101,7 @@ func (s *Server) verifySubscription(w http.ResponseWriter, r *http.Request) {
 		NowUnix: req.NowUnix,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeDependencyFailure(w, "anti-forgery service unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -112,7 +112,7 @@ func (s *Server) auditRoot(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	resp, err := s.Antiforgery.AuditRoot(ctx, &antiforgerypb.AuditRootRequest{})
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeDependencyFailure(w, "anti-forgery service unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

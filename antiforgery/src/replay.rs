@@ -123,7 +123,12 @@ fn hmac_matches(key: &[u8], msg: &[u8], tag: &[u8]) -> bool {
 
 /// Compute the HMAC tag for a refresh attempt with `key`.
 pub fn refresh_tag(key: &[u8], token_id: &str, nonce: &str, timestamp_ms: i64) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    let Ok(mut mac) = HmacSha256::new_from_slice(key) else {
+        // `Hmac<Sha256>` normally accepts every key length. If a future MAC
+        // implementation rejects one, return an unusable tag: verification
+        // fails closed instead of taking down the control plane.
+        return Vec::new();
+    };
     mac.update(&refresh_message(token_id, nonce, timestamp_ms));
     mac.finalize().into_bytes().to_vec()
 }

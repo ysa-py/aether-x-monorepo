@@ -46,7 +46,7 @@ func (s *Server) subscriberMe(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	info, err := s.Subscriber.GetSubscriber(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeDependencyFailure(w, "subscriber service unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, info)
@@ -72,7 +72,7 @@ func (s *Server) subscriberRevoke(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	if err := s.Subscriber.RevokeDevice(ctx, req.DeviceID); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeDependencyFailure(w, "device revocation service unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})

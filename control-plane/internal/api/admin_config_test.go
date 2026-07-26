@@ -40,8 +40,10 @@ func TestTransportsCatalog(t *testing.T) {
 	for _, p := range resp.Protocols {
 		pset[p.ID] = true
 	}
-	if !pset["vless"] || !pset["trojan"] {
-		t.Error("catalog missing protocols vless/trojan")
+	for _, protocol := range []string{"vless", "trojan", "hysteria2", "tuic"} {
+		if !pset[protocol] {
+			t.Errorf("catalog missing protocol %q", protocol)
+		}
 	}
 }
 
@@ -89,9 +91,14 @@ func TestBuildConfigValidation(t *testing.T) {
 		body string
 	}{
 		{"bad protocol", `{"protocol":"bogus","transport":"ws","address":"h","port":443}`},
+		{"unknown field", `{"protocol":"vless","transport":"ws","address":"node.example.com","port":443,"uuid":"u","accidental_typo":true}`},
+		{"multiple JSON documents", `{"protocol":"vless","transport":"ws","address":"node.example.com","port":443,"uuid":"u"}{}`},
 		{"bad transport", `{"protocol":"vless","transport":"bogus","address":"h","port":443}`},
 		{"missing address", `{"protocol":"vless","transport":"ws","port":443}`},
 		{"bad port", `{"protocol":"vless","transport":"ws","address":"h","port":0}`},
+		{"hysteria missing bandwidth", `{"protocol":"hysteria2","transport":"quic","address":"node.example.com","port":443,"password":"p"}`},
+		{"tuic wrong transport", `{"protocol":"tuic","transport":"ws","address":"node.example.com","port":443,"uuid":"u","password":"p"}`},
+		{"tuic missing password", `{"protocol":"tuic","transport":"quic","address":"node.example.com","port":443,"uuid":"u"}`},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(http.MethodPost, "/v1/admin/build-config", bytes.NewBufferString(c.body))
@@ -169,5 +176,58 @@ func TestTransportProfilesCatalog(t *testing.T) {
 	}
 	if !haveXHTTP {
 		t.Error("xray splithttp (XHTTP) profile missing")
+	}
+}
+
+func TestBuildConfigNativeQUICProtocols(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		sharePrefix   string
+		clashRequired []string
+		singboxFields []string
+	}{
+		{
+			name:        "hysteria2",
+			body:        `{"protocol":"hysteria2","transport":"quic","address":"node.example.com","port":443,"password":"hy2-password","sni":"node.example.com","up_mbps":100,"down_mbps":200}`,
+			sharePrefix: "hysteria2://",
+			clashRequired: []string{`type: "hysteria2"`, `up: 100`, `down: 200`},
+			singboxFields: []string{`"type": "hysteria2"`, `"up_mbps": 100`, `"down_mbps": 200`},
+		},
+		{
+			name:        "tuic",
+			body:        `{"protocol":"tuic","transport":"quic","address":"node.example.com","port":443,"uuid":"tuic-uuid","password":"tuic-password","sni":"node.example.com","congestion_control":"bbr","udp_relay_mode":"native"}`,
+			sharePrefix: "tuic://",
+			clashRequired: []string{`type: "tuic"`, `congestion-controller: "bbr"`, `udp-relay-mode: "native"`},
+			singboxFields: []string{`"type": "tuic"`, `"congestion_control": "bbr"`, `"udp_relay_mode": "native"`},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/admin/build-config", bytes.NewBufferString(tc.body))
+			rec := httptest.NewRecorder()
+			(&Server{Build: "t"}).Router().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+			}
+			var response BuildConfigResponse
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if !strings.HasPrefix(response.ShareLink, tc.sharePrefix) {
+				t.Fatalf("share link = %q, want prefix %q", response.ShareLink, tc.sharePrefix)
+			}
+			for _, required := range tc.clashRequired {
+				if !strings.Contains(response.Clash, required) {
+					t.Errorf("Clash output missing %q:\n%s", required, response.Clash)
+				}
+			}
+			for _, required := range tc.singboxFields {
+				if !strings.Contains(response.Singbox, required) {
+					t.Errorf("sing-box output missing %q:\n%s", required, response.Singbox)
+				}
+			}
+		})
 	}
 }

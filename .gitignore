@@ -12,6 +12,17 @@ control-plane/vendor/
 # ignore if you prefer to generate in CI only:
 # api/gen/
 
+# Node / Next.js (generated locally and in CI)
+node_modules/
+.next/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Python bytecode (never a source artifact)
+__pycache__/
+*.py[cod]
+
 # Editor / OS
 .vscode/
 .idea/

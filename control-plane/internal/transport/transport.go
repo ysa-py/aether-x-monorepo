@@ -79,7 +79,7 @@ func IsValid(id string) bool {
 
 // Protocol is a supported inbound protocol (pairs with a transport).
 type Protocol struct {
-	ID     string `json:"id"` // vless | vmess | trojan | shadowsocks
+	ID     string `json:"id"` // vless | vmess | trojan | shadowsocks | hysteria2 | tuic
 	Name   string `json:"name"`
 	NameFA string `json:"name_fa"`
 }
@@ -91,6 +91,8 @@ func Protocols() []Protocol {
 		{ID: "vmess", Name: "VMess", NameFA: "VMess"},
 		{ID: "trojan", Name: "Trojan", NameFA: "تروجان"},
 		{ID: "shadowsocks", Name: "Shadowsocks", NameFA: "شادوساکس"},
+		{ID: "hysteria2", Name: "Hysteria 2", NameFA: "هیستریا ۲"},
+		{ID: "tuic", Name: "TUIC v5", NameFA: "توئیک نسخه ۵"},
 	}
 }
 
