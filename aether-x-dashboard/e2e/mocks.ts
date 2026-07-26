@@ -170,6 +170,8 @@ export function mockTransports(page: Page) {
       { id: "vmess", name: "VMess", name_fa: "VMess" },
       { id: "trojan", name: "Trojan", name_fa: "تروجان" },
       { id: "shadowsocks", name: "Shadowsocks", name_fa: "شادوساکس" },
+      { id: "hysteria2", name: "Hysteria 2", name_fa: "هیستریا ۲" },
+      { id: "tuic", name: "TUIC v5", name_fa: "توئیک نسخه ۵" },
     ],
     transports: [
       { id: "xhttp", name: "XHTTP", name_fa: "XHTTP", family: "http", needs_path: true, needs_host: true, needs_mode: true, modes: ["packet-up", "stream-up", "stream-one"], needs_service: false, description: "Newest Xray transport.", newest: true, legacy: false },
@@ -194,18 +196,35 @@ export function mockTransports(page: Page) {
  */
 export function mockBuildConfig(page: Page) {
   return page.route("**/v1/admin/build-config", async (route: Route) => {
-    const body = (route.request().postDataJSON() ?? {}) as { protocol?: string; transport?: string };
+    const body = (route.request().postDataJSON() ?? {}) as {
+      protocol?: string; transport?: string; address?: string; port?: number;
+      uuid?: string; password?: string;
+    };
     const proto = body.protocol ?? "vless";
     const tr = body.transport ?? "xhttp";
-    const share = `${proto}://0d1f@node.aether-x.example:443?type=${tr}&security=tls#Aether-X`;
+    const address = body.address ?? "198.51.100.42";
+    const port = body.port ?? 443;
+    const password = body.password ?? "test-password";
+    const uuid = body.uuid ?? "0d1f";
+    const share = proto === "hysteria2"
+      ? `hysteria2://${encodeURIComponent(password)}@${address}:${port}?upmbps=100&downmbps=200#Aether-X`
+      : proto === "tuic"
+        ? `tuic://${encodeURIComponent(uuid)}:${encodeURIComponent(password)}@${address}:${port}?congestion_control=bbr&udp_relay_mode=native#Aether-X`
+        : `${proto}://${uuid}@${address}:${port}?type=${tr}&security=tls#Aether-X`;
+    const nativeClash = proto === "hysteria2"
+      ? "proxies:\n  - name: Aether-X\n    type: hysteria2\n    up: 100\n    down: 200"
+      : proto === "tuic"
+        ? "proxies:\n  - name: Aether-X\n    type: tuic\n    congestion-controller: bbr\n    udp-relay-mode: native"
+        : "proxies:\n  - name: Aether-X\n    network: " + tr;
+    const nativeTransport = proto === "hysteria2" || proto === "tuic" ? "" : `, "transport": {"type": "${tr}"}`;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       headers: CORS,
       body: JSON.stringify({
         share_link: share,
-        clash: "proxies:\n  - name: Aether-X\n    network: " + tr,
-        singbox: '{\n  "outbounds": [\n    {"type": "' + proto + '", "transport": {"type": "' + tr + '"}}\n  ]\n}',
+        clash: nativeClash,
+        singbox: `{\n  "outbounds": [\n    {"type": "${proto}"${nativeTransport}}\n  ]\n}`,
         base64: btoa(share),
         protocol: proto,
         transport: tr,

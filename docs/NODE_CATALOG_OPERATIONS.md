@@ -10,8 +10,9 @@ disabled and returns a truthful `503`. If an operator explicitly enables
 `AETHER_ENABLE_DYNAMIC_SUBS=true` but supplies an invalid/unreadable catalog,
 the control plane fails startup rather than silently serving stale or invented
 configuration. It does **not** fall back to a syntactic but non-routable link.
-The legacy placeholder renderer is retained only behind an explicit test-fixture
-switch so historical unit/E2E fixtures remain isolated from production behavior.
+There is no production placeholder renderer. Unit and E2E tests construct a
+verified test catalog with documentation-range endpoint material so the same
+catalog renderer is exercised without publishing a real operator endpoint.
 
 ## Required document shape
 
@@ -40,13 +41,55 @@ The values above are schema labels, **not usable endpoint values**. Supply
 real, reviewed credentials through the operator's secret/config mechanism; do
 not put private keys in this catalog or commit the catalog to Git.
 
+### Native QUIC node shape
+
+Hysteria2 and TUIC are represented as native protocol outbounds, rather than
+being falsely converted into VLESS-over-QUIC. They must be targeted only to
+client cores that can import their native schema.
+
+```json
+{
+  "id": "native-quic-node-id",
+  "address": "operator-controlled-fqdn-or-ip",
+  "port": 443,
+  "protocol": "hysteria2",
+  "password": "operator-provisioned-password",
+  "transport": "quic",
+  "sni": "operator-controlled-sni-name",
+  "up_mbps": 100,
+  "down_mbps": 200,
+  "enabled": true,
+  "client_cores": ["sing-box", "clash-meta", "nekobox"]
+}
+```
+
+For TUIC, use `"protocol": "tuic"`, plus `uuid` and `password`. Optional
+`congestion_control` and `udp_relay_mode` default to `bbr` and `native` only
+when the node uses those server-side settings. Do not omit an actual required
+server-side setting merely to make a client profile look simpler.
+
 ## Validation performed before publication
 
 - exactly one JSON document; unknown fields are rejected;
 - a non-empty version and at least one uniquely identified node;
 - IP or DNS address, non-zero port, supported protocol and transport;
 - no `localhost`, `.example`, whitespace, URL/userinfo, or insecure-TLS node;
-- credential presence for VLESS/VMess and Trojan/Shadowsocks;
+- credential presence for VLESS/VMess, Trojan/Shadowsocks, Hysteria2, and TUIC;
+- protocol-correct rendering: a VLESS `flow` is emitted only when explicitly
+  supplied, and Shadowsocks emits its configured cipher in URI, Clash/Mihomo,
+  and sing-box forms;
+- native QUIC protocols: Hysteria2 requires `transport: "quic"`, a password,
+  and positive `up_mbps` / `down_mbps`; TUIC requires `transport: "quic"`, a
+  UUID, and a password. Both require an explicit allow-list limited to
+  `sing-box`, `clash-meta`, and/or `nekobox`; they are never advertised to
+  Xray-core or a client with no compatible native schema;
+- pre-publication render gate: each accepted node must generate one non-empty
+  share link, one parseable Clash/Mihomo YAML proxy with the expected protocol
+  type, and one parseable sing-box JSON outbound with the expected protocol
+  type before it can replace the active catalog;
+- Shadowsocks is limited to `tcp`/`raw` in this catalog because no plugin
+  transport schema is published. A node requiring a plugin is rejected rather
+  than silently receiving a configuration with its transport discarded;
 - optional allow-list restricted to supported standard clients:
   `sing-box`, `xray-core`, `clash-meta`, `shadowrocket`, and `nekobox`.
 
@@ -54,6 +97,13 @@ The catalog service orders validated nodes deterministically. It intentionally
 does not use the repository's simulated ClickHouse score reader to reorder
 production clients. A real telemetry score reader must be wired and evaluated
 in shadow mode before it is allowed to influence this baseline.
+
+`DynamicOptimizerService` is retained only as an advisory compatibility seam:
+it can evaluate aggregate score availability but intentionally fails closed when
+asked to publish a subscription. It has no verified endpoint material and must
+not synthesize an address from a telemetry node ID. Production publication uses
+`TelemetryCatalogSubscriptionService`, which can reorder only entries already
+present in the verified catalog.
 
 ## Rollout sequence
 
@@ -64,7 +114,9 @@ in shadow mode before it is allowed to influence this baseline.
    `AETHER_NODE_CATALOG_RELOAD_INTERVAL` of at least one second (30 seconds is
    the default).
 4. Verify each target client receives only allow-listed nodes and can parse its
-   chosen subscription format in an authorized staging environment.
+   chosen subscription format in an authorized staging environment. For a
+   Shadowsocks entry, verify the configured cipher (or the documented default
+   `chacha20-ietf-poly1305`) is accepted by that client.
 5. Rotate catalog version/change ID through the controlled deployment path.
 
 ## Atomic hot reload

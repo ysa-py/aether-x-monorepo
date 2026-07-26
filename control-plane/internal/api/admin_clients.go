@@ -32,7 +32,7 @@ func (s *Server) adminDraftClient(w http.ResponseWriter, r *http.Request) {
 	}
 	draft, err := s.ClientDrafts.DraftFromURLAndStore(req.DocsURL)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "client draft rejected"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -64,7 +64,7 @@ func (s *Server) adminConfirmClient(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "draft not found"})
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "client confirmation rejected"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

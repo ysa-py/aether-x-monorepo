@@ -27,6 +27,11 @@
 
 set -uo pipefail
 
+# CI's final structural gate intentionally reruns only source/deployment
+# invariants after the dedicated Rust, Go, and dashboard jobs have completed.
+# It avoids a second compiler invocation with an incomplete toolchain image.
+STRUCTURAL_ONLY="${AETHER_STRUCTURAL_ONLY:-false}"
+
 FAILED=0
 PASSED=0
 SKIPPED=0
@@ -60,7 +65,12 @@ echo "========================================"
 # ── Rust gates ───────────────────────────────────────────────────────────────
 echo
 echo "[Rust]"
-if command -v cargo &>/dev/null; then
+if [ "$STRUCTURAL_ONLY" = "true" ]; then
+    skip "cargo fmt"    "structural-only gate; rust-gate ran compiler checks"
+    skip "cargo clippy" "structural-only gate; rust-gate ran compiler checks"
+    skip "cargo test"   "structural-only gate; rust-gate ran compiler checks"
+    skip "cargo audit"  "structural-only gate; audit is not a source invariant"
+elif command -v cargo &>/dev/null; then
     run_gate "cargo fmt --all -- --check" \
         cargo fmt --all -- --check
     run_gate "cargo clippy --workspace --all-targets --all-features -D warnings" \
@@ -83,7 +93,11 @@ fi
 # ── Go gates ─────────────────────────────────────────────────────────────────
 echo
 echo "[Go]"
-if command -v go &>/dev/null; then
+if [ "$STRUCTURAL_ONLY" = "true" ]; then
+    skip "go vet"       "structural-only gate; go-gate ran compiler checks"
+    skip "go test -race" "structural-only gate; go-gate ran compiler checks"
+    skip "gofmt"        "structural-only gate; go-gate ran formatting check"
+elif command -v go &>/dev/null; then
     run_gate "go vet ./..."        env -C control-plane go vet ./...
     run_gate "go test -race ./..." env -C control-plane go test -race ./...
 
@@ -103,7 +117,9 @@ fi
 # ── Dashboard gates ──────────────────────────────────────────────────────────
 echo
 echo "[Dashboard]"
-if command -v npx &>/dev/null && [ -d aether-x-dashboard/node_modules ]; then
+if [ "$STRUCTURAL_ONLY" = "true" ]; then
+    skip "tsc --noEmit" "structural-only gate; dashboard-gate ran typecheck"
+elif command -v npx &>/dev/null && [ -d aether-x-dashboard/node_modules ]; then
     run_gate "tsc --noEmit" env -C aether-x-dashboard npx tsc --noEmit
 else
     skip "tsc --noEmit" "npx unavailable or dependencies not installed"
@@ -140,6 +156,60 @@ if [ -z "$missing_forbid" ]; then
     pass "#![forbid(unsafe_code)] present in all core crates"
 else
     fail "#![forbid(unsafe_code)] missing in:$missing_forbid"
+fi
+
+# Runtime Rust must not turn an unexpected condition into a process abort.
+# Unit tests are intentionally excluded: this lightweight source gate stops at
+# each module's #[cfg(test)] block, while the compiler/Clippy gates validate
+# the whole crate when the Rust toolchain is available. The pattern is narrow
+# on purpose: unwrap_or/expect-style words in comments and normal Result
+# propagation are not failures.
+runtime_panic_sites="$(
+    for crate_dir in core-supervisor/src antiforgery/src routing/src antiforgery-server/src; do
+        [ -d "$crate_dir" ] || continue
+        while IFS= read -r -d '' source; do
+            awk '
+                /^[[:space:]]*#\[cfg\(test\)\]/ { tests = 1 }
+                !tests && (/\.(unwrap|expect)\(/ || /panic!\(/ || /todo!\(/ || /unimplemented!\(/) {
+                    print FILENAME ":" FNR ":" $0
+                }
+            ' "$source"
+        done < <(find "$crate_dir" -type f -name '*.rs' -print0)
+    done
+)"
+if [ -z "$runtime_panic_sites" ]; then
+    pass "Runtime Rust has no unwrap/expect/panic/todo paths"
+else
+    fail "Runtime Rust contains a panic-prone path"
+    echo "$runtime_panic_sites" | sed 's/^/            /'
+fi
+
+# A standard-client subscription must never receive a fabricated destination.
+# Fixture endpoints belong only in *_test.go; production code must require a
+# verified catalog and return a truthful 503 when none is configured.
+placeholder_endpoints="$(
+    grep -RIn --include='*.go' 'aether-x\.example' control-plane/cmd control-plane/internal 2>/dev/null \
+        | grep -vE '_test\.go:' || true
+)"
+if [ -z "$placeholder_endpoints" ]; then
+    pass "No production Go placeholder endpoints"
+else
+    fail "Production Go source contains a placeholder endpoint"
+    echo "$placeholder_endpoints" | sed 's/^/            /'
+fi
+
+# Dependency errors can contain addresses, TLS details, credentials, or provider
+# implementation information. The public API must expose a stable sanitized
+# status instead of serializing raw `err.Error()` text to callers.
+raw_api_errors="$(
+    grep -RIn --include='*.go' '"error".*err\.Error()' control-plane/internal/api 2>/dev/null \
+        | grep -vE '_test\.go:' || true
+)"
+if [ -z "$raw_api_errors" ]; then
+    pass "Public Go API does not expose raw dependency errors"
+else
+    fail "Public Go API exposes raw dependency errors"
+    echo "$raw_api_errors" | sed 's/^/            /'
 fi
 
 # The blackout honesty contract must exist and keep its non-claims section.

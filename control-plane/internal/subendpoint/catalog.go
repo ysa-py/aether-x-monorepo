@@ -14,6 +14,7 @@ import (
 
 	"github.com/aether-x/control-plane/internal/telemetry"
 	"github.com/aether-x/control-plane/internal/transport"
+	"gopkg.in/yaml.v3"
 )
 
 // ErrNoCompatibleNodes means the operator has not supplied a verified node for
@@ -234,37 +235,60 @@ func validateCatalogNode(node CatalogNode) error {
 	if strings.TrimSpace(node.ID) == "" {
 		return errors.New("catalog node id is required")
 	}
-	if !validPublishedHost(node.Address) {
-		return fmt.Errorf("catalog node %q has an invalid or placeholder address", node.ID)
+	if err := ValidateNodeConfig(node.NodeConfig); err != nil {
+		return fmt.Errorf("catalog node %q: %w", node.ID, err)
 	}
-	if node.Port < 1 || node.Port > 65535 {
-		return fmt.Errorf("catalog node %q has an invalid port", node.ID)
-	}
-	if !supportedProtocol(node.Protocol) {
-		return fmt.Errorf("catalog node %q uses unsupported protocol %q", node.ID, node.Protocol)
-	}
-	if !transport.IsValid(node.Transport) {
-		return fmt.Errorf("catalog node %q uses unsupported transport %q", node.ID, node.Transport)
-	}
-	if node.Insecure {
-		return fmt.Errorf("catalog node %q may not publish insecure TLS", node.ID)
-	}
-	if node.SNI != "" && !validPublishedHost(node.SNI) {
-		return fmt.Errorf("catalog node %q has an invalid or placeholder SNI", node.ID)
-	}
-	if node.Host != "" && !validPublishedHost(node.Host) {
-		return fmt.Errorf("catalog node %q has an invalid or placeholder host", node.ID)
-	}
-	if (node.Protocol == "vless" || node.Protocol == "vmess") && strings.TrimSpace(node.UUID) == "" {
-		return fmt.Errorf("catalog node %q requires a UUID for protocol %q", node.ID, node.Protocol)
-	}
-	if (node.Protocol == "trojan" || node.Protocol == "shadowsocks") && strings.TrimSpace(node.Password) == "" {
-		return fmt.Errorf("catalog node %q requires a password for protocol %q", node.ID, node.Protocol)
+	if isNativeQUICProtocol(node.Protocol) && len(node.ClientCores) == 0 {
+		return fmt.Errorf("catalog node %q requires an explicit compatible client allow-list for protocol %q", node.ID, node.Protocol)
 	}
 	for _, core := range node.ClientCores {
 		if !knownClientCore(core) {
 			return fmt.Errorf("catalog node %q names unsupported client core %q", node.ID, core)
 		}
+		if !coreSupportsProtocol(core, node.Protocol) {
+			return fmt.Errorf("catalog node %q protocol %q is not supported by client core %q", node.ID, node.Protocol, core)
+		}
+	}
+	return validateNodeRenderability(node)
+}
+
+func validateNodeRenderability(node CatalogNode) error {
+	config := ProxyLinkConfig{
+		Remark: "catalog-validation",
+		Node:   node.NodeConfig,
+	}
+	if link := BuildProxyLink(config); link == "" {
+		return fmt.Errorf("catalog node %q could not render a standard share link", node.ID)
+	}
+
+	var clash struct {
+		Proxies []struct {
+			Type string `yaml:"type"`
+		} `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal(buildClashFromNodes([]ProxyLinkConfig{config}), &clash); err != nil {
+		return fmt.Errorf("catalog node %q renders invalid Clash YAML: %w", node.ID, err)
+	}
+	if len(clash.Proxies) != 1 {
+		return fmt.Errorf("catalog node %q renders %d Clash proxies, want 1", node.ID, len(clash.Proxies))
+	}
+	if clash.Proxies[0].Type != clashProtocol(node.Protocol) {
+		return fmt.Errorf("catalog node %q renders Clash type %q, want %q", node.ID, clash.Proxies[0].Type, clashProtocol(node.Protocol))
+	}
+
+	var singbox struct {
+		Outbounds []struct {
+			Type string `json:"type"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(buildSingboxFromNodes([]ProxyLinkConfig{config}), &singbox); err != nil {
+		return fmt.Errorf("catalog node %q renders invalid sing-box JSON: %w", node.ID, err)
+	}
+	if len(singbox.Outbounds) != 1 {
+		return fmt.Errorf("catalog node %q renders %d sing-box outbounds, want 1", node.ID, len(singbox.Outbounds))
+	}
+	if singbox.Outbounds[0].Type != node.Protocol {
+		return fmt.Errorf("catalog node %q renders sing-box type %q, want %q", node.ID, singbox.Outbounds[0].Type, node.Protocol)
 	}
 	return nil
 }
@@ -286,6 +310,25 @@ func supportedProtocol(protocol string) bool {
 		}
 	}
 	return false
+}
+
+func isNativeQUICProtocol(protocol string) bool {
+	return protocol == "hysteria2" || protocol == "tuic"
+}
+
+// coreSupportsProtocol keeps native QUIC protocols away from clients whose
+// standard import schema cannot represent them. Stream protocols remain
+// catalog-driven because their compatibility is expressed by transport fields.
+func coreSupportsProtocol(core, protocol string) bool {
+	if !isNativeQUICProtocol(protocol) {
+		return true
+	}
+	switch core {
+	case "sing-box", "clash-meta", "nekobox":
+		return true
+	default:
+		return false
+	}
 }
 
 func knownClientCore(core string) bool {

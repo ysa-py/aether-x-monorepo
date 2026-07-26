@@ -120,3 +120,22 @@ func TestIsLoopbackEndpoint(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPAddrUsesExplicitAddressThenValidatedPortFallback(t *testing.T) {
+	t.Setenv("AETHER_HTTP_ADDR", "127.0.0.1:9090")
+	t.Setenv("AETHER_PORT", "8081")
+	if got := httpAddrFromEnv(); got != "127.0.0.1:9090" {
+		t.Fatalf("explicit address = %q, want 127.0.0.1:9090", got)
+	}
+
+	t.Setenv("AETHER_HTTP_ADDR", "")
+	t.Setenv("AETHER_PORT", "8081")
+	if got := httpAddrFromEnv(); got != "0.0.0.0:8081" {
+		t.Fatalf("port fallback = %q, want 0.0.0.0:8081", got)
+	}
+
+	t.Setenv("AETHER_PORT", "not-a-port")
+	if got := httpAddrFromEnv(); got != "0.0.0.0:8080" {
+		t.Fatalf("invalid port fallback = %q, want default", got)
+	}
+}

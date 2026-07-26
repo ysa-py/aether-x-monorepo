@@ -75,14 +75,27 @@ impl InTlsTunnel {
         if !fronted.valid {
             return None;
         }
-        let session_id = format!("intls-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() & 0xFFFFFFFFFFFF);
+        // Wall clocks can be adjusted before the Unix epoch. That must be an
+        // ordinary degraded condition, never a process panic; a zero timestamp
+        // still combines with the monotonic session counter below.
+        let epoch_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        // Allocate the sequence before constructing the ID so concurrent
+        // successful handshakes cannot reuse one even within the same clock tick.
+        let sequence = self.total_sessions.fetch_add(1, Ordering::Relaxed);
+        let session_id = format!(
+            "intls-{:x}-{:x}",
+            epoch_nanos & 0xFFFF_FFFF_FFFF,
+            sequence,
+        );
         let mut session = InTlsSession::new(&fronted.outer_sni, real_dest, &session_id);
         session.mark_established();
         {
             let mut sessions = self.sessions.write();
             sessions.push(session);
         }
-        self.total_sessions.fetch_add(1, Ordering::Relaxed);
         Some(session_id)
     }
 
@@ -163,5 +176,24 @@ mod tests {
         }
         assert_eq!(tunnel.active_count(), 3);
         assert_eq!(tunnel.total_sessions(), 3);
+    }
+}
+
+#[cfg(test)]
+mod resilience_tests {
+    use super::*;
+
+    #[test]
+    fn generated_session_ids_remain_distinct_within_one_clock_tick() {
+        let tunnel = InTlsTunnel::new();
+        let first = tunnel.establish("first.example");
+        let second = tunnel.establish("second.example");
+
+        assert!(first.is_some(), "first fronted session must be created");
+        assert!(second.is_some(), "second fronted session must be created");
+        if let (Some(first), Some(second)) = (first, second) {
+            assert_ne!(first, second, "the monotonic sequence prevents ID reuse");
+            assert_eq!(tunnel.total_sessions(), 2);
+        }
     }
 }

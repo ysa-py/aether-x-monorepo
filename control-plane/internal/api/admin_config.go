@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -31,21 +32,25 @@ func (s *Server) transportsHandler(w http.ResponseWriter, r *http.Request) {
 // selects protocol + transport + params; the server returns the authoritative
 // generated configs (share link + Clash + sing-box + base64).
 type BuildConfigRequest struct {
-	Protocol    string `json:"protocol"`
-	Transport   string `json:"transport"`
-	Address     string `json:"address"`
-	Port        int    `json:"port"`
-	UUID        string `json:"uuid"`
-	Password    string `json:"password"`
-	Path        string `json:"path"`
-	Host        string `json:"host"`
-	SNI         string `json:"sni"`
-	ALPN        string `json:"alpn"`
-	Remark      string `json:"remark"`
-	ServiceName string `json:"service_name"`
-	Mode        string `json:"mode"`
-	HeaderType  string `json:"header_type"`
-	Seed        string `json:"seed"`
+	Protocol          string `json:"protocol"`
+	Transport         string `json:"transport"`
+	Address           string `json:"address"`
+	Port              int    `json:"port"`
+	UUID              string `json:"uuid"`
+	Password          string `json:"password"`
+	Path              string `json:"path"`
+	Host              string `json:"host"`
+	SNI               string `json:"sni"`
+	ALPN              string `json:"alpn"`
+	Remark            string `json:"remark"`
+	ServiceName       string `json:"service_name"`
+	Mode              string `json:"mode"`
+	HeaderType        string `json:"header_type"`
+	Seed              string `json:"seed"`
+	UpMbps            int    `json:"up_mbps"`
+	DownMbps          int    `json:"down_mbps"`
+	CongestionControl string `json:"congestion_control"`
+	UDPRelayMode      string `json:"udp_relay_mode"`
 }
 
 // BuildConfigResponse is the result of building a config server-side.
@@ -61,8 +66,15 @@ type BuildConfigResponse struct {
 // buildConfigHandler handles POST /v1/admin/build-config.
 func (s *Server) buildConfigHandler(w http.ResponseWriter, r *http.Request) {
 	var req BuildConfigRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request must contain exactly one JSON object"})
 		return
 	}
 
@@ -86,20 +98,28 @@ func (s *Server) buildConfigHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	node := subendpoint.NodeConfig{
-		Address:     req.Address,
-		Port:        req.Port,
-		Protocol:    req.Protocol,
-		UUID:        req.UUID,
-		Password:    req.Password,
-		Transport:   req.Transport,
-		Path:        req.Path,
-		Host:        req.Host,
-		SNI:         req.SNI,
-		ALPN:        req.ALPN,
-		ServiceName: req.ServiceName,
-		Mode:        req.Mode,
-		HeaderType:  req.HeaderType,
-		Seed:        req.Seed,
+		Address:           req.Address,
+		Port:              req.Port,
+		Protocol:          req.Protocol,
+		UUID:              req.UUID,
+		Password:          req.Password,
+		Transport:         req.Transport,
+		Path:              req.Path,
+		Host:              req.Host,
+		SNI:               req.SNI,
+		ALPN:              req.ALPN,
+		ServiceName:       req.ServiceName,
+		Mode:              req.Mode,
+		HeaderType:        req.HeaderType,
+		Seed:              req.Seed,
+		UpMbps:            req.UpMbps,
+		DownMbps:          req.DownMbps,
+		CongestionControl: req.CongestionControl,
+		UDPRelayMode:      req.UDPRelayMode,
+	}
+	if err := subendpoint.ValidateNodeConfig(node); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid node configuration"})
+		return
 	}
 	cfg := subendpoint.ProxyLinkConfig{Remark: remark, FragPath: "sub", Node: node}
 

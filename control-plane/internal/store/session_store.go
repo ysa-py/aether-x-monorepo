@@ -1,5 +1,6 @@
-// Package store - session_store.go: Maintain active user sessions in Redis 7 with PostgreSQL 16 persistence,
-// enabling instant node failover without dropping active TCP streams.
+// Package store maintains active user sessions in Redis 7 with PostgreSQL 16
+// persistence. It records peer-supported native QUIC migration state; it does
+// not claim transparent migration for arbitrary TCP streams.
 package store
 
 import (
@@ -29,9 +30,12 @@ type SessionStoreStats struct {
 
 // Stats returns session store stats (wrapper)
 func (m *SessionManager) SessionStats(ctx context.Context) SessionStoreStats {
-	// Count active from PG
+	if m == nil || m.pg == nil {
+		return SessionStoreStats{}
+	}
+	// Count active from PG.
 	sessions, _ := m.pg.ListActiveByUser(ctx, "") // empty user returns all? Mock returns all
-	// For mock, count map
+	// For mock, count map.
 	active := 0
 	if mem, ok := m.pg.(*MemSessionStore); ok {
 		active = mem.Count()

@@ -296,9 +296,12 @@ pub(crate) mod merkle_bridge {
             let mut levels: Vec<Vec<[u8; 32]>> = vec![cur.clone()];
             while cur.len() > 1 {
                 if cur.len() % 2 == 1 {
-                    let last = *cur.last().unwrap();
+                    // The loop condition implies a non-empty level, but
+                    // malformed in-memory state must result in no proof rather
+                    // than a panic.
+                    let last = cur.last().copied()?;
                     cur.push(last);
-                    levels.last_mut().unwrap().push(last);
+                    levels.last_mut()?.push(last);
                 }
                 let mut next = Vec::with_capacity(cur.len() / 2);
                 for pair in cur.chunks(2) {

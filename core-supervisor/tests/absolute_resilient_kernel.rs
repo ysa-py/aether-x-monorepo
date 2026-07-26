@@ -22,6 +22,7 @@ fn sockops_zero_copy_sub_millisecond() {
     let mgr = SockHashManager::new();
     let src = SockKey::new("10.0.0.1", "1.2.3.4", 1234, 443);
     let dst = SockKey::new("10.0.0.2", "1.2.3.4", 1235, 443);
+    mgr.mark_kernel_attached();
     mgr.add_socket(src.clone(), 10).unwrap();
     mgr.add_socket(dst.clone(), 11).unwrap();
 
@@ -224,6 +225,7 @@ fn absolute_resilient_chain_end_to_end() {
     let sock_mgr = SockHashManager::new();
     let k1 = SockKey::new("10.0.0.1", "1.2.3.4", 1234, 443);
     let k2 = SockKey::new("10.0.0.2", "1.2.3.4", 1235, 443);
+    sock_mgr.mark_kernel_attached();
     sock_mgr.add_socket(k1.clone(), 10).unwrap();
     sock_mgr.add_socket(k2.clone(), 11).unwrap();
     let _lat = sock_mgr.redirect_msg(&k1, &k2, 1400).unwrap();

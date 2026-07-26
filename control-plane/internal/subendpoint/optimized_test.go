@@ -2,6 +2,7 @@ package subendpoint
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -34,123 +35,53 @@ func TestDetectClientContextDoesNotInventNetworkLocation(t *testing.T) {
 	}
 }
 
-func TestOptimizedNodeConfig(t *testing.T) {
-	ns := telemetry.NodeScore{
-		NodeID:      "node-fra-01",
-		Region:      "eu-central",
-		Protocol:    "vless",
-		Transport:   "xhttp",
-		SuccessRate: 0.95,
-	}
-	cfg := OptimizedNodeConfig(ns, "user-uuid-123")
-	if cfg.ID != "node-fra-01" {
-		t.Errorf("expected ID node-fra-01, got %s", cfg.ID)
-	}
-	if cfg.Protocol != "vless" {
-		t.Errorf("expected vless, got %s", cfg.Protocol)
-	}
-	if cfg.Transport != "xhttp" {
-		t.Errorf("expected xhttp, got %s", cfg.Transport)
-	}
-}
-
-func TestBuildOptimizedSubscription(t *testing.T) {
+func TestAdvisoryOptimizerNeverFabricatesSubscriptionEndpoints(t *testing.T) {
 	reader := &telemetry.MockReader{
 		Scores: []telemetry.NodeScore{
-			{NodeID: "node-fra-01", Region: "eu-central", ISP: "MCI", Protocol: "vless", Transport: "xhttp", SuccessRate: 0.95, AvgRTTMs: 120, LastSeen: time.Now()},
-			{NodeID: "node-tr-01", Region: "tr-central", ISP: "MCI", Protocol: "vless", Transport: "ws", SuccessRate: 0.88, AvgRTTMs: 80, LastSeen: time.Now()},
+			{
+				NodeID:      "telemetry-only-node",
+				Region:      "eu-central",
+				ISP:         "MCI",
+				Protocol:    "vless",
+				Transport:   "xhttp",
+				SuccessRate: 0.95,
+				AvgRTTMs:    120,
+				LastSeen:    time.Now(),
+			},
 		},
 	}
-	opt := telemetry.NewOptimizer(reader)
-	svc := NewDynamicOptimizerService(opt)
+	service := NewDynamicOptimizerService(telemetry.NewOptimizer(reader))
+	sub := &SubscriptionData{UserID: "subscriber-identity"}
+	client := telemetry.ClientContext{ISP: "MCI", Region: "tehran", Core: "sing-box"}
 
-	sub := &SubscriptionData{
-		SubID:     "sub-001",
-		UserID:    "user-uuid-123",
-		BytesUsed: 1024,
-		BytesTotal: 10 * 1024 * 1024 * 1024,
-		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-		DisplayName: "Aether-X Test",
-		SubURL: "https://example.com/sub/token",
+	body, contentType, reason, err := service.BuildOptimizedSubscription(
+		context.Background(), sub, client, "base64",
+	)
+	if !errors.Is(err, ErrNoCompatibleNodes) {
+		t.Fatalf("advisory optimizer must fail closed, got %v", err)
 	}
-
-	clientCtx := telemetry.ClientContext{
-		ISP:    "MCI",
-		Region: "tehran",
-		Core:   "sing-box",
-	}
-
-	body, ct, reason, err := svc.BuildOptimizedSubscription(context.Background(), sub, clientCtx, "base64")
-	if err != nil {
-		t.Fatalf("build failed: %v", err)
-	}
-	if len(body) == 0 {
-		t.Error("body empty")
-	}
-	if ct == "" {
-		t.Error("content type empty")
+	if body != nil || contentType != "" {
+		t.Fatalf("advisory optimizer emitted a subscription body: body=%q contentType=%q", body, contentType)
 	}
 	if reason == "" {
-		t.Error("reason empty")
-	}
-	// Body should be base64 encoded (default)
-}
-
-func TestBuildGeoRouted(t *testing.T) {
-	reader := &telemetry.MockReader{
-		Scores: []telemetry.NodeScore{
-			{NodeID: "node-fra-01", Region: "eu-central", ISP: "MCI", Protocol: "vless", Transport: "xhttp", SuccessRate: 0.95, AvgRTTMs: 120, LastSeen: time.Now()},
-		},
-	}
-	opt := telemetry.NewOptimizer(reader)
-	svc := NewDynamicOptimizerService(opt)
-
-	sub := &SubscriptionData{
-		UserID:    "user-123",
-		BytesUsed: 0,
-		BytesTotal: 50 * 1024 * 1024 * 1024,
-		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-		SubURL: "https://example.com/sub/abc",
+		t.Fatal("fail-closed response must explain that a verified catalog is required")
 	}
 
-	result, err := svc.BuildGeoRouted(context.Background(), sub, "sing-box/1.8", "1.2.3.4", "singbox")
-	if err != nil {
-		t.Fatalf("geo routed failed: %v", err)
-	}
-	if result.Nodes == 0 {
-		t.Error("expected nodes >0")
-	}
-	if result.ContentType != "application/json; charset=utf-8" {
-		t.Errorf("expected singbox json, got %s", result.ContentType)
+	result, geoErr := service.BuildGeoRouted(context.Background(), sub, "sing-box/1.11", "198.51.100.7", "singbox")
+	if !errors.Is(geoErr, ErrNoCompatibleNodes) || result != nil {
+		t.Fatalf("geo-routed advisory path must not publish fake nodes: result=%+v err=%v", result, geoErr)
 	}
 }
 
-func TestClashAndSingboxFormats(t *testing.T) {
-	reader := &telemetry.MockReader{
-		Scores: []telemetry.NodeScore{
-			{NodeID: "node-fra-01", Region: "eu-central", ISP: "MCI", Protocol: "vless", Transport: "ws", SuccessRate: 0.95, AvgRTTMs: 120, LastSeen: time.Now()},
-		},
-	}
-	opt := telemetry.NewOptimizer(reader)
-	svc := NewDynamicOptimizerService(opt)
-
-	sub := &SubscriptionData{
-		UserID:    "user-123",
-		BytesUsed: 0,
-		BytesTotal: 10 * 1024 * 1024 * 1024,
-		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-		SubURL: "https://example.com/sub/abc",
-	}
-
-	// sing-box format
-	result, _ := svc.BuildGeoRouted(context.Background(), sub, "sing-box", "1.2.3.4", "singbox")
-	if result.ContentType != "application/json; charset=utf-8" {
-		t.Error("singbox should be json")
-	}
-
-	// clash format
-	result2, _ := svc.BuildGeoRouted(context.Background(), sub, "clash-meta", "1.2.3.4", "clash")
-	if result2.ContentType != "text/yaml; charset=utf-8" {
-		t.Error("clash should be yaml")
+func TestAdvisoryOptimizerFailsClosedWhenReaderIsUnavailable(t *testing.T) {
+	service := NewDynamicOptimizerService(telemetry.NewOptimizer(&telemetry.MockReader{Err: errors.New("database unavailable")}))
+	_, _, _, err := service.BuildOptimizedSubscription(
+		context.Background(),
+		&SubscriptionData{UserID: "subscriber"},
+		telemetry.ClientContext{Core: "sing-box"},
+		"base64",
+	)
+	if !errors.Is(err, ErrNoCompatibleNodes) {
+		t.Fatalf("reader outage must fail closed to the verified catalog path, got %v", err)
 	}
 }

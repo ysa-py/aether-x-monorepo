@@ -2,9 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 /**
  * E2E config for the Aether-X NOC dashboard. Headless Chromium + Firefox.
- * The dev server is auto-started on :3100; all backend calls are mocked in the
- * specs (hermetic — no Go control plane required), which keeps the suite fast
- * and flake-free.
+ *
+ * The test server is the production Next.js standalone artifact, not `next
+ * start`: standalone output is what the dashboard container executes. All
+ * backend calls are mocked in the specs (hermetic — no Go control plane
+ * required), which keeps the suite fast and flake-free.
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -20,15 +22,16 @@ export default defineConfig({
     headless: true,
     trace: "on-first-retry",
   },
+  // Keep this list aligned with CI's explicit browser installation. A declared
+  // project without its browser binary turns every E2E case into a false fail.
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "firefox", use: { ...devices["Desktop Firefox"] } },
-    { name: "webkit", use: { ...devices["Desktop Safari"] } },
   ],
   webServer: {
-    command: "npx next build && npx next start -p 3100",
+    command: "npm run build && node scripts/serve-e2e.mjs",
     port: 3100,
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 180_000,
   },
 });

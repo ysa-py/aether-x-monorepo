@@ -40,7 +40,7 @@ func TestSessionManager_CreateAndGet(t *testing.T) {
 	}
 }
 
-func TestSessionManager_MigrationZeroDisconnection(t *testing.T) {
+func TestSessionManagerRecordsNativeQUICMigration(t *testing.T) {
 	mem := NewMemSessionStore()
 	mgr := NewSessionManager("localhost:6379", mem)
 	ctx := context.Background()
@@ -48,12 +48,14 @@ func TestSessionManager_MigrationZeroDisconnection(t *testing.T) {
 	sess := &Session{
 		ID:     "sess-migrate",
 		UserID: "user-001",
-		NodeID: "node-fra-01",
-		ConnID: "conn-preserving-cid",
+		NodeID:   "node-fra-01",
+		Protocol: "hysteria2",
+		ConnID:   "conn-preserving-cid",
 	}
 	mgr.CreateSession(ctx, sess)
 
-	// Simulate QUIC CID migration: node changes but ConnID preserved, session stays active
+	// Model a peer-confirmed QUIC CID migration: control-plane state changes while
+	// the native connection ID remains stable.
 	err := mgr.MigrateSession(ctx, "sess-migrate", "node-tr-01", "2.3.4.5")
 	if err != nil {
 		t.Fatalf("migrate failed: %v", err)
@@ -84,6 +86,8 @@ func TestSessionManager_AutoFailover(t *testing.T) {
 		ID:         "sess-stale",
 		UserID:     "user-failover",
 		NodeID:     "node-dead",
+		Protocol:   "hysteria2",
+		ConnID:     "native-quic-cid",
 		Active:     true,
 		LastSeenAt: time.Now().Add(-5 * time.Minute),
 	}
@@ -169,8 +173,9 @@ func TestSessionManagerSerializesConcurrentMigrations(t *testing.T) {
 	if err := mgr.CreateSession(ctx, &Session{
 		ID:     "sess-concurrent",
 		UserID: "u1",
-		NodeID: "node-0",
-		ConnID: "stable-quic-cid",
+		NodeID:   "node-0",
+		Protocol: "tuic",
+		ConnID:   "stable-quic-cid",
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -209,5 +214,77 @@ func TestSelectFailoverNodeIsStableAndAvoidsCurrent(t *testing.T) {
 	second, ok := selectFailoverNode("session-1", "node-a", candidates)
 	if !ok || second != first {
 		t.Fatalf("failover selection must be stable: first=%q second=%q", first, second)
+	}
+}
+
+func TestSessionManagerRejectsTransparentMigrationForStreamSession(t *testing.T) {
+	mem := NewMemSessionStore()
+	mgr := NewSessionManager("localhost:6379", mem)
+	ctx := context.Background()
+	if err := mgr.CreateSession(ctx, &Session{
+		ID:       "sess-tcp",
+		UserID:   "u1",
+		NodeID:   "node-a",
+		Protocol: "vless",
+		Transport: "tcp",
+		ConnID:   "not-a-quic-cid",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := mgr.MigrateSession(ctx, "sess-tcp", "node-b", ""); err == nil {
+		t.Fatal("stream/TCP session must not be reported as transparently migrated")
+	}
+}
+
+func TestAutoFailoverSkipsNonMigratableStreamSessions(t *testing.T) {
+	mem := NewMemSessionStore()
+	mgr := NewSessionManager("localhost:6379", mem)
+	ctx := context.Background()
+	if err := mem.SaveSession(ctx, &Session{
+		ID:         "sess-stream-stale",
+		UserID:     "u1",
+		NodeID:     "node-dead",
+		Protocol:   "vless",
+		Transport:  "tcp",
+		Active:     true,
+		LastSeenAt: time.Now().Add(-5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed stream session: %v", err)
+	}
+	migrated, err := mgr.AutoFailover(ctx, "u1", []string{"node-b"})
+	if err != nil {
+		t.Fatalf("auto failover: %v", err)
+	}
+	if migrated != 0 {
+		t.Fatalf("stream/TCP session must not be reported as migrated, got %d", migrated)
+	}
+	got, err := mem.GetSession(ctx, "sess-stream-stale")
+	if err != nil || got.NodeID != "node-dead" {
+		t.Fatalf("stream session state changed despite no peer migration support: %+v err=%v", got, err)
+	}
+}
+
+func TestSessionManagerDegradesSafelyWithoutConfiguredDependencies(t *testing.T) {
+	ctx := context.Background()
+	var nilManager *SessionManager
+	if err := nilManager.CreateSession(ctx, &Session{ID: "s", UserID: "u"}); err == nil {
+		t.Fatal("nil session manager must return an error instead of panicking")
+	}
+	if _, err := nilManager.GetSession(ctx, "s"); err == nil {
+		t.Fatal("nil session manager read must return an error instead of panicking")
+	}
+	if got := nilManager.SessionStats(ctx); got.ActiveSessions != 0 || got.RedisConnected {
+		t.Fatalf("nil manager stats must be an empty safe snapshot: %+v", got)
+	}
+
+	// Redis is an optional performance cache. A durable store alone must keep
+	// session bookkeeping functional rather than turning a cache outage into a
+	// control-plane crash.
+	manager := &SessionManager{pg: NewMemSessionStore()}
+	if err := manager.CreateSession(ctx, &Session{ID: "no-redis", UserID: "u1"}); err != nil {
+		t.Fatalf("durable-only create: %v", err)
+	}
+	if _, err := manager.GetSession(ctx, "no-redis"); err != nil {
+		t.Fatalf("durable-only read: %v", err)
 	}
 }

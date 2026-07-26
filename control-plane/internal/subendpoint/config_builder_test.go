@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func testConfig() ProxyLinkConfig {
@@ -238,5 +240,198 @@ func TestSingboxEmitPerTransport(t *testing.T) {
 		if tr == "xhttp" && !strings.Contains(string(body), "\"type\": \"xhttp\"") {
 			t.Errorf("xhttp singbox missing transport type")
 		}
+	}
+}
+
+func TestShadowsocksRendererPreservesConfiguredCipherAcrossClientFormats(t *testing.T) {
+	cfg := testConfig()
+	cfg.Node.Protocol = "shadowsocks"
+	cfg.Node.Transport = "tcp"
+	cfg.Node.Password = "p@ss word"
+	cfg.Node.Encryption = "aes-128-gcm"
+
+	link := BuildProxyLink(cfg)
+	if !strings.HasPrefix(link, "ss://") {
+		t.Fatalf("expected ss:// prefix, got %q", link)
+	}
+	encodedUserinfo := strings.Split(strings.TrimPrefix(link, "ss://"), "@")[0]
+	userinfo, err := base64.RawURLEncoding.DecodeString(encodedUserinfo)
+	if err != nil {
+		t.Fatalf("decode Shadowsocks userinfo: %v", err)
+	}
+	if got, want := string(userinfo), "aes-128-gcm:p@ss word"; got != want {
+		t.Fatalf("Shadowsocks userinfo = %q, want %q", got, want)
+	}
+
+	clash := string(buildClashFromNodes([]ProxyLinkConfig{cfg}))
+	for _, required := range []string{
+		`type: "ss"`,
+		`cipher: "aes-128-gcm"`,
+		`password: "p@ss word"`,
+	} {
+		if !strings.Contains(clash, required) {
+			t.Errorf("Clash config missing %q:\n%s", required, clash)
+		}
+	}
+	var clashDocument struct {
+		Proxies []struct {
+			Type     string `yaml:"type"`
+			Cipher   string `yaml:"cipher"`
+			Password string `yaml:"password"`
+		} `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal([]byte(clash), &clashDocument); err != nil {
+		t.Fatalf("decode Clash YAML: %v", err)
+	}
+	if len(clashDocument.Proxies) != 1 {
+		t.Fatalf("Clash proxies = %d, want 1", len(clashDocument.Proxies))
+	}
+	clashProxy := clashDocument.Proxies[0]
+	if clashProxy.Type != "ss" || clashProxy.Cipher != "aes-128-gcm" || clashProxy.Password != "p@ss word" {
+		t.Fatalf("Clash Shadowsocks proxy = %+v", clashProxy)
+	}
+
+	var singbox struct {
+		Outbounds []struct {
+			Type     string `json:"type"`
+			Method   string `json:"method"`
+			Password string `json:"password"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(buildSingboxFromNodes([]ProxyLinkConfig{cfg}), &singbox); err != nil {
+		t.Fatalf("decode sing-box config: %v", err)
+	}
+	if len(singbox.Outbounds) != 1 {
+		t.Fatalf("sing-box outbounds = %d, want 1", len(singbox.Outbounds))
+	}
+	outbound := singbox.Outbounds[0]
+	if outbound.Type != "shadowsocks" || outbound.Method != "aes-128-gcm" || outbound.Password != "p@ss word" {
+		t.Fatalf("sing-box Shadowsocks outbound = %+v", outbound)
+	}
+}
+
+func TestVlessFlowIsExplicitAndConsistent(t *testing.T) {
+	cfg := testConfig()
+
+	if link := BuildProxyLink(cfg); strings.Contains(link, "flow=") {
+		t.Fatalf("VLESS link injected an unconfigured flow: %s", link)
+	}
+	if clash := string(buildClashFromNodes([]ProxyLinkConfig{cfg})); strings.Contains(clash, "flow:") {
+		t.Fatalf("Clash config injected an unconfigured flow:\n%s", clash)
+	}
+	if singbox := string(buildSingboxFromNodes([]ProxyLinkConfig{cfg})); strings.Contains(singbox, `"flow"`) {
+		t.Fatalf("sing-box config injected an unconfigured flow:\n%s", singbox)
+	}
+
+	cfg.Node.Flow = "xtls-rprx-vision"
+	if link := BuildProxyLink(cfg); !strings.Contains(link, "flow=xtls-rprx-vision") {
+		t.Fatalf("VLESS link omitted configured flow: %s", link)
+	}
+	if clash := string(buildClashFromNodes([]ProxyLinkConfig{cfg})); !strings.Contains(clash, `flow: "xtls-rprx-vision"`) {
+		t.Fatalf("Clash config omitted configured flow:\n%s", clash)
+	}
+	if singbox := string(buildSingboxFromNodes([]ProxyLinkConfig{cfg})); !strings.Contains(singbox, `"flow": "xtls-rprx-vision"`) {
+		t.Fatalf("sing-box config omitted configured flow:\n%s", singbox)
+	}
+}
+
+func TestBuildProxyLinkRejectsUnknownProtocol(t *testing.T) {
+	cfg := testConfig()
+	cfg.Node.Protocol = "unsupported"
+	if link := BuildProxyLink(cfg); link != "" {
+		t.Fatalf("unknown protocol produced a fabricated link: %q", link)
+	}
+}
+
+func nativeQUICConfig(protocol string) ProxyLinkConfig {
+	cfg := testConfig()
+	cfg.Node.Protocol = protocol
+	cfg.Node.Address = "198.51.100.42"
+	cfg.Node.Transport = "quic"
+	cfg.Node.Password = "native-quic-password"
+	cfg.Node.SNI = "native.example.com"
+	cfg.Node.Host = ""
+	if protocol == "hysteria2" {
+		cfg.Node.UpMbps = 100
+		cfg.Node.DownMbps = 200
+	} else {
+		cfg.Node.UUID = "tuic-uuid"
+		cfg.Node.CongestionControl = "bbr"
+		cfg.Node.UDPRelayMode = "native"
+	}
+	return cfg
+}
+
+func TestNativeQUICRenderersProduceProtocolSpecificStandardConfigs(t *testing.T) {
+	cases := []struct {
+		protocol      string
+		sharePrefix   string
+		clashRequired []string
+		jsonRequired  []string
+	}{
+		{
+			protocol:      "hysteria2",
+			sharePrefix:   "hysteria2://",
+			clashRequired: []string{`type: "hysteria2"`, `up: 100`, `down: 200`},
+			jsonRequired:  []string{`"type": "hysteria2"`, `"up_mbps": 100`, `"down_mbps": 200`},
+		},
+		{
+			protocol:      "tuic",
+			sharePrefix:   "tuic://",
+			clashRequired: []string{`type: "tuic"`, `congestion-controller: "bbr"`, `udp-relay-mode: "native"`},
+			jsonRequired:  []string{`"type": "tuic"`, `"congestion_control": "bbr"`, `"udp_relay_mode": "native"`},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.protocol, func(t *testing.T) {
+			cfg := nativeQUICConfig(tc.protocol)
+			if err := ValidateNodeConfig(cfg.Node); err != nil {
+				t.Fatalf("ValidateNodeConfig: %v", err)
+			}
+			if link := BuildProxyLink(cfg); !strings.HasPrefix(link, tc.sharePrefix) {
+				t.Fatalf("share link = %q, want prefix %q", link, tc.sharePrefix)
+			}
+
+			clash := buildClashFromNodes([]ProxyLinkConfig{cfg})
+			var clashDocument struct {
+				Proxies []map[string]any `yaml:"proxies"`
+			}
+			if err := yaml.Unmarshal(clash, &clashDocument); err != nil {
+				t.Fatalf("decode Clash YAML: %v", err)
+			}
+			if len(clashDocument.Proxies) != 1 {
+				t.Fatalf("Clash proxies = %d, want 1", len(clashDocument.Proxies))
+			}
+			for _, required := range tc.clashRequired {
+				if !strings.Contains(string(clash), required) {
+					t.Errorf("Clash output missing %q:\n%s", required, clash)
+				}
+			}
+
+			singbox := buildSingboxFromNodes([]ProxyLinkConfig{cfg})
+			if !json.Valid(singbox) {
+				t.Fatalf("invalid sing-box JSON: %s", singbox)
+			}
+			for _, required := range tc.jsonRequired {
+				if !strings.Contains(string(singbox), required) {
+					t.Errorf("sing-box output missing %q:\n%s", required, singbox)
+				}
+			}
+		})
+	}
+}
+
+func TestNativeQUICValidationRejectsIncompleteOrIncorrectTransport(t *testing.T) {
+	hysteria := nativeQUICConfig("hysteria2")
+	hysteria.Node.UpMbps = 0
+	if err := ValidateNodeConfig(hysteria.Node); err == nil {
+		t.Fatal("Hysteria2 without reviewed bandwidth must be rejected")
+	}
+
+	tuic := nativeQUICConfig("tuic")
+	tuic.Node.Transport = "ws"
+	if err := ValidateNodeConfig(tuic.Node); err == nil {
+		t.Fatal("TUIC without QUIC transport must be rejected")
 	}
 }

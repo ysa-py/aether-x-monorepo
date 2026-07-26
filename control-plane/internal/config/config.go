@@ -44,7 +44,7 @@ type Config struct {
 // FromEnv reads configuration from the process environment.
 func FromEnv() (Config, error) {
 	c := Config{
-		HTTPAddr:               getenv("AETHER_HTTP_ADDR", "0.0.0.0:8080"),
+		HTTPAddr:               httpAddrFromEnv(),
 		JWTKeyID:                getenv("AETHER_JWT_KEY_ID", "active"),
 		SupervisorAddr:         getenv("AETHER_SUPERVISOR_ADDR", "127.0.0.1:7070"),
 		PostgresDSN:            getenv("AETHER_POSTGRES_DSN", "postgres://aether:aether@localhost:5432/aether?sslmode=disable"),
@@ -169,6 +169,20 @@ func isLoopbackEndpoint(address string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// httpAddrFromEnv gives the explicit socket address precedence. AETHER_PORT is
+// a deployment-friendly fallback for platforms that inject a port separately;
+// malformed or out-of-range values fail safe to the documented default.
+func httpAddrFromEnv() string {
+	if value, exists := os.LookupEnv("AETHER_HTTP_ADDR"); exists && strings.TrimSpace(value) != "" {
+		return value
+	}
+	port, err := strconv.Atoi(getenv("AETHER_PORT", "8080"))
+	if err != nil || port < 1 || port > 65535 {
+		return "0.0.0.0:8080"
+	}
+	return net.JoinHostPort("0.0.0.0", strconv.Itoa(port))
 }
 
 func getenv(k, def string) string {

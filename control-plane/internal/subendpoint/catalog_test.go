@@ -118,3 +118,63 @@ func TestCatalogSubscriptionRejectsClientWithoutVerifiedNode(t *testing.T) {
 		t.Fatalf("expected no verified node error, got %v", err)
 	}
 }
+
+func TestNodeCatalogRejectsUnrenderableProtocolOptions(t *testing.T) {
+	node := testCatalogNode()
+	node.Protocol = "shadowsocks"
+	node.Password = "operator-password"
+	node.UUID = ""
+	node.Transport = "ws"
+	if _, err := NewNodeCatalog(CatalogDocument{Version: "v1", Nodes: []CatalogNode{node}}); err == nil {
+		t.Fatal("Shadowsocks plugin transport must be rejected when no plugin renderer exists")
+	}
+
+	node = testCatalogNode()
+	node.Protocol = "trojan"
+	node.Password = "operator-password"
+	node.UUID = ""
+	node.Flow = "xtls-rprx-vision"
+	if _, err := NewNodeCatalog(CatalogDocument{Version: "v1", Nodes: []CatalogNode{node}}); err == nil {
+		t.Fatal("non-VLESS flow must be rejected")
+	}
+}
+
+func TestCatalogRenderGateRejectsMissingRendererAndSafelyQuotesCredentials(t *testing.T) {
+	unrenderable := testCatalogNode()
+	unrenderable.Protocol = "unsupported"
+	if err := validateNodeRenderability(unrenderable); err == nil {
+		t.Fatal("render gate must reject a node with no standard-client renderer")
+	}
+
+	node := testCatalogNode()
+	node.Protocol = "trojan"
+	node.UUID = ""
+	node.Password = `pass: "quoted" # YAML-looking but valid credential`
+	if _, err := NewNodeCatalog(CatalogDocument{Version: "v1", Nodes: []CatalogNode{node}}); err != nil {
+		t.Fatalf("quoted credential must render into valid standard-client formats: %v", err)
+	}
+}
+
+func TestNativeQUICCatalogRequiresCompatibleExplicitClientCores(t *testing.T) {
+	node := testCatalogNode()
+	node.Protocol = "hysteria2"
+	node.Transport = "quic"
+	node.UUID = ""
+	node.Password = "hy2-password"
+	node.UpMbps = 100
+	node.DownMbps = 200
+	node.ClientCores = nil
+	if _, err := NewNodeCatalog(CatalogDocument{Version: "v1", Nodes: []CatalogNode{node}}); err == nil {
+		t.Fatal("native QUIC node without explicit compatible cores must be rejected")
+	}
+
+	node.ClientCores = []string{"xray-core"}
+	if _, err := NewNodeCatalog(CatalogDocument{Version: "v1", Nodes: []CatalogNode{node}}); err == nil {
+		t.Fatal("native QUIC node must not be advertised to xray-core")
+	}
+
+	node.ClientCores = []string{"sing-box", "clash-meta", "nekobox"}
+	if _, err := NewNodeCatalog(CatalogDocument{Version: "v1", Nodes: []CatalogNode{node}}); err != nil {
+		t.Fatalf("compatible native QUIC node should pass the render gate: %v", err)
+	}
+}

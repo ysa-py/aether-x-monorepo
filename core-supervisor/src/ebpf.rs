@@ -281,6 +281,20 @@ impl Default for EbpfMorphEngine {
     }
 }
 
+impl Drop for EbpfMorphEngine {
+    fn drop(&mut self) {
+        // This mock/control-plane representation owns only userspace map
+        // state. A real loader owns the bpf_link and must detach it before
+        // dropping this controller; clearing local state prevents stale flow
+        // configuration from surviving an orderly SIGTERM shutdown.
+        self.active = false;
+        self.iface = None;
+        self.frag_map.clear();
+        self.ooo_map.clear();
+        self.wscale_map.clear();
+    }
+}
+
 // ============================================================================
 // Production loader sketch (aya) - kept as comment for reference
 // ============================================================================

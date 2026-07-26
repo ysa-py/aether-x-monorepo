@@ -63,13 +63,10 @@ impl Updater for HttpUpdater {
 #[must_use]
 pub fn preset() -> RuleSet {
     let parse_cidrs = |list: &[&str]| -> Vec<IpNet> {
-        list.iter()
-            .map(|s| {
-                s.parse::<IpNet>()
-                    .map_err(|e| RoutingError::InvalidCidr(e.to_string()))
-            })
-            .collect::<Result<Vec<_>>>()
-            .expect("preset CIDRs are valid")
+        // The preset is static source data, but it must still remain total if
+        // somebody edits it incorrectly. Invalid entries are omitted; the
+        // matching unit tests pin the expected set so CI catches a bad edit.
+        list.iter().filter_map(|value| value.parse::<IpNet>().ok()).collect()
     };
 
     RuleSet {
@@ -151,6 +148,16 @@ mod tests {
             }),
             Action::Direct
         );
+    }
+
+    #[test]
+    fn preset_keeps_every_declared_iran_cidr() {
+        let ir_cidr_count = preset()
+            .categories
+            .iter()
+            .find(|category| category.name == "ir")
+            .map_or(0, |category| category.cidrs.len());
+        assert_eq!(ir_cidr_count, 8, "a malformed static CIDR must not silently shrink the preset");
     }
 
     #[test]
