@@ -93,8 +93,12 @@ impl TlsMimicTemplate {
     pub fn chrome_120() -> Self {
         Self {
             mode: MimicryMode::Boring,
-            cipher_suites: vec![4865, 4866, 4867, 49195, 49199, 49196, 49200, 52393, 52392, 49171, 49172],
-            extensions: vec![0, 23, 65281, 10, 11, 35, 16, 5, 13, 18, 51, 45, 43, 27, 17513],
+            cipher_suites: vec![
+                4865, 4866, 4867, 49195, 49199, 49196, 49200, 52393, 52392, 49171, 49172,
+            ],
+            extensions: vec![
+                0, 23, 65281, 10, 11, 35, 16, 5, 13, 18, 51, 45, 43, 27, 17513,
+            ],
             alpn: vec!["h2".into(), "http/1.1".into()],
             grease: true,
             utls_fingerprint: "chrome_120".into(),
@@ -173,20 +177,29 @@ impl TlsMimicryEngine {
     }
 
     /// Evaluate whether incoming handshake is a probe.
-    pub fn evaluate_probe(&self, offered_ciphers: &[u16], offered_extensions: &[u16]) -> ProbeVerdict {
+    pub fn evaluate_probe(
+        &self,
+        offered_ciphers: &[u16],
+        offered_extensions: &[u16],
+    ) -> ProbeVerdict {
         // Simple heuristics: if client offers only 1 cipher or missing common extensions, likely probe
         if offered_ciphers.len() <= 2 {
-            self.probes_blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.probes_blocked
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return ProbeVerdict::Probe;
         }
         if !offered_extensions.contains(&0) {
             // No SNI extension -> likely probe scanner
-            self.probes_blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.probes_blocked
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return ProbeVerdict::Probe;
         }
         // If template exists and ciphers overlap significantly -> legitimate
         let tmpl = self.template.read();
-        let overlap = offered_ciphers.iter().filter(|c| tmpl.cipher_suites.contains(c)).count();
+        let overlap = offered_ciphers
+            .iter()
+            .filter(|c| tmpl.cipher_suites.contains(c))
+            .count();
         if overlap >= 3 {
             ProbeVerdict::Legitimate
         } else {
@@ -212,7 +225,8 @@ impl TlsMimicryEngine {
 
     #[must_use]
     pub fn probes_blocked(&self) -> u64 {
-        self.probes_blocked.load(std::sync::atomic::Ordering::Relaxed)
+        self.probes_blocked
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[must_use]

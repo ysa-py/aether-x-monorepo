@@ -14,9 +14,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let artifact_end = data.len() - 96;
     let artifact_bytes = &data[..artifact_end];
-    let sig_bytes: [u8; 64] = data[artifact_end..artifact_end + 64]
-        .try_into()
-        .unwrap();
+    let sig_bytes: [u8; 64] = data[artifact_end..artifact_end + 64].try_into().unwrap();
     let key_bytes: [u8; 32] = data[artifact_end + 64..artifact_end + 96]
         .try_into()
         .unwrap();

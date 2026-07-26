@@ -97,7 +97,9 @@ impl RuntimePreflight {
         let capabilities = match read_effective_capabilities(Path::new("/proc/self/status")) {
             Ok(caps) => caps,
             Err(error) => {
-                diagnostics.push(format!("unable to read effective Linux capabilities: {error}"));
+                diagnostics.push(format!(
+                    "unable to read effective Linux capabilities: {error}"
+                ));
                 RuntimeCapabilities::default()
             }
         };
@@ -109,10 +111,8 @@ impl RuntimePreflight {
             }
         };
         let configured = std::env::var("AETHER_CNI_INTERFACE").ok();
-        let interface = match discover_interface(
-            Path::new("/sys/class/net"),
-            configured.as_deref(),
-        ) {
+        let interface = match discover_interface(Path::new("/sys/class/net"), configured.as_deref())
+        {
             Ok(interface) => interface,
             Err(error) => {
                 diagnostics.push(format!("unable to discover CNI interface: {error}"));
@@ -284,7 +284,9 @@ mod tests {
     fn detects_a_real_bpffs_mount_from_mountinfo() {
         let mountinfo = "36 25 0:31 / /sys/fs/bpf rw,nosuid,nodev,noexec,relatime - bpf bpf rw\n";
         assert!(bpffs_is_mounted(mountinfo));
-        assert!(!bpffs_is_mounted("36 25 0:31 / /sys/fs/bpf rw - tmpfs tmpfs rw\n"));
+        assert!(!bpffs_is_mounted(
+            "36 25 0:31 / /sys/fs/bpf rw - tmpfs tmpfs rw\n"
+        ));
         assert!(!bpffs_is_mounted("malformed mountinfo"));
     }
 

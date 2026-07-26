@@ -18,7 +18,7 @@ pub enum TrafficModelKind {
     ZoomRtp,
     YouTubeHls,
     TlsWebSocket,
-    AparatVod,      // existing Iranian domestic
+    AparatVod,       // existing Iranian domestic
     ShaparakBanking, // most whitelisted
 }
 
@@ -220,7 +220,11 @@ impl OnnxMorphEngine {
         let next_f64 = |state: &mut u64| {
             let v = next_u64(state) >> 11;
             let f = (v as f64) / 9_007_199_254_740_992.0;
-            if f <= 0.0 { f64::MIN_POSITIVE } else { f }
+            if f <= 0.0 {
+                f64::MIN_POSITIVE
+            } else {
+                f
+            }
         };
 
         // Gaussian for size
@@ -306,7 +310,10 @@ mod tests {
         engine.select_model_for_isolation(1);
         assert_eq!(engine.active_model().kind, TrafficModelKind::AparatVod);
         engine.select_model_for_isolation(2);
-        assert_eq!(engine.active_model().kind, TrafficModelKind::ShaparakBanking);
+        assert_eq!(
+            engine.active_model().kind,
+            TrafficModelKind::ShaparakBanking
+        );
     }
 
     #[test]
@@ -340,6 +347,8 @@ mod tests {
         let models = engine.models();
         assert_eq!(models.len(), 5);
         assert!(models.iter().any(|m| m.kind == TrafficModelKind::ZoomRtp));
-        assert!(models.iter().any(|m| m.kind == TrafficModelKind::YouTubeHls));
+        assert!(models
+            .iter()
+            .any(|m| m.kind == TrafficModelKind::YouTubeHls));
     }
 }

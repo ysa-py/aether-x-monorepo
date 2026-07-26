@@ -174,8 +174,7 @@ impl DeterministicFallback {
         // In real, would be actual socket connect with timeout
         if h.success_rate > 0.3 {
             // Establish tunnel (mock)
-            self.manager
-                .establish_tunnel(edge_id, core_addr, kind);
+            self.manager.establish_tunnel(edge_id, core_addr, kind);
             true
         } else {
             // Fail fast, record failure

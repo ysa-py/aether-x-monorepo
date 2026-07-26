@@ -91,7 +91,10 @@ impl ReverseRelayEngine {
 
         // Pick front SNI via domain fronting engine
         let fronted = self.fronting.fronted_handshake(core_addr);
-        let front_sni = fronted.as_ref().map(|f| f.outer_sni.clone()).unwrap_or_else(|| "www.digikala.com".to_string());
+        let front_sni = fronted
+            .as_ref()
+            .map(|f| f.outer_sni.clone())
+            .unwrap_or_else(|| "www.digikala.com".to_string());
 
         // Try auto-failover chain
         let chosen = self.tunnel_mgr.auto_failover(edge_id, core_addr);
@@ -118,10 +121,7 @@ impl ReverseRelayEngine {
             None => {
                 // All transports exhausted -> schedule reconnect with backoff
                 let backoff = self.record_failed_attempt(edge_id);
-                ConnectResult::FailedRetry {
-                    backoff,
-                    front_sni,
-                }
+                ConnectResult::FailedRetry { backoff, front_sni }
             }
         }
     }
@@ -179,7 +179,12 @@ impl ReverseRelayEngine {
 
     #[must_use]
     pub fn active_edges(&self) -> Vec<EdgeRelay> {
-        self.edges.read().values().filter(|e| e.healthy).cloned().collect()
+        self.edges
+            .read()
+            .values()
+            .filter(|e| e.healthy)
+            .cloned()
+            .collect()
     }
 
     #[must_use]
@@ -210,8 +215,14 @@ impl ReverseRelayEngine {
 
 #[derive(Debug, Clone)]
 pub enum ConnectResult {
-    Connected { transport: FallbackKind, front_sni: String },
-    FailedRetry { backoff: Duration, front_sni: String },
+    Connected {
+        transport: FallbackKind,
+        front_sni: String,
+    },
+    FailedRetry {
+        backoff: Duration,
+        front_sni: String,
+    },
     EdgeNotFound,
 }
 
@@ -231,8 +242,18 @@ mod tests {
         engine.register_edge(EdgeRelay::new("tehran-01", "tehran", "MCI"));
         let res = engine.connect_edge("tehran-01", "core.example:443");
         match res {
-            ConnectResult::Connected { transport, front_sni } => {
-                assert!(matches!(transport, FallbackKind::TlsInTls | FallbackKind::GrpcMux | FallbackKind::DoH | FallbackKind::IcmpEncap | FallbackKind::Ipv6Direct));
+            ConnectResult::Connected {
+                transport,
+                front_sni,
+            } => {
+                assert!(matches!(
+                    transport,
+                    FallbackKind::TlsInTls
+                        | FallbackKind::GrpcMux
+                        | FallbackKind::DoH
+                        | FallbackKind::IcmpEncap
+                        | FallbackKind::Ipv6Direct
+                ));
                 assert!(!front_sni.is_empty());
             }
             _ => panic!("should connect"),
@@ -261,7 +282,13 @@ mod tests {
         engine.register_edge(EdgeRelay::new("edge-backoff", "tehran", "MCI"));
 
         // Exhaust all transports by failing them
-        for kind in [FallbackKind::TlsInTls, FallbackKind::GrpcMux, FallbackKind::DoH, FallbackKind::IcmpEncap, FallbackKind::Ipv6Direct] {
+        for kind in [
+            FallbackKind::TlsInTls,
+            FallbackKind::GrpcMux,
+            FallbackKind::DoH,
+            FallbackKind::IcmpEncap,
+            FallbackKind::Ipv6Direct,
+        ] {
             for _ in 0..4 {
                 engine.tunnel_manager().record_failure(kind);
             }
@@ -278,7 +305,10 @@ mod tests {
         // second attempt larger backoff
         let res2 = engine.connect_edge("edge-backoff", "core:443");
         match (res, res2) {
-            (ConnectResult::FailedRetry { backoff: b1, .. }, ConnectResult::FailedRetry { backoff: b2, .. }) => {
+            (
+                ConnectResult::FailedRetry { backoff: b1, .. },
+                ConnectResult::FailedRetry { backoff: b2, .. },
+            ) => {
                 assert!(b2 >= b1);
             }
             _ => panic!("both should be failed"),

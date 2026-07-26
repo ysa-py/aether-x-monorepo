@@ -3,7 +3,7 @@
 //! Rewrites TCP Window Sizes, TTLs, IP IDs, TCP Option ordering, and Congestion Control dynamics (BBR/Cubic spoofing)
 //! at kernel level via eBPF to spoof target OS network stacks (iOS 17, Windows 11, Android 14).
 
-use crate::os_polymorphism::{IpIdBehavior, OsProfile, OsPolymorphismEngine, TcpOption};
+use crate::os_polymorphism::{IpIdBehavior, OsPolymorphismEngine, OsProfile, TcpOption};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -131,9 +131,18 @@ impl TcpPolymorphismEngine {
     }
 
     #[must_use]
-    pub fn morph_with_tcp(&self, original_ttl: u8, original_window: u16) -> (u8, u16, Vec<TcpOption>, CongestionControl) {
+    pub fn morph_with_tcp(
+        &self,
+        original_ttl: u8,
+        original_window: u16,
+    ) -> (u8, u16, Vec<TcpOption>, CongestionControl) {
         let Some(tcp_profile) = self.active_tcp_profile() else {
-            return (original_ttl, original_window, vec![TcpOption::Mss], CongestionControl::Cubic);
+            return (
+                original_ttl,
+                original_window,
+                vec![TcpOption::Mss],
+                CongestionControl::Cubic,
+            );
         };
         (
             tcp_profile.os.ttl,

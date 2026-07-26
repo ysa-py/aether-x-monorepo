@@ -168,7 +168,10 @@ impl TlsServerConfig {
 
     fn into_tonic(self) -> ServerTlsConfig {
         ServerTlsConfig::new()
-            .identity(Identity::from_pem(self.certificate_pem, self.private_key_pem))
+            .identity(Identity::from_pem(
+                self.certificate_pem,
+                self.private_key_pem,
+            ))
             .client_ca_root(Certificate::from_pem(self.client_ca_pem))
     }
 }

@@ -126,9 +126,9 @@ impl CniDetector {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachStrategy {
-    XdpDriver,       // fastest, sub-0.1ms
-    XdpGeneric,      // veth compatible, sub-1ms
-    TcEgress,        // TC egress qdisc
+    XdpDriver,        // fastest, sub-0.1ms
+    XdpGeneric,       // veth compatible, sub-1ms
+    TcEgress,         // TC egress qdisc
     FallbackAfPacket, // user-space raw socket fragmentation + TC slicing, no panic
 }
 

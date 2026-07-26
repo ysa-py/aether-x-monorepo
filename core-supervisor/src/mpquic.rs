@@ -80,9 +80,7 @@ impl MpQuicSession {
     pub fn remove_path(&self, iface_name: &str) -> bool {
         let removed = self.paths.write().remove(iface_name).is_some();
         if removed {
-            self.active_interfaces
-                .write()
-                .retain(|n| n != iface_name);
+            self.active_interfaces.write().retain(|n| n != iface_name);
         }
         removed
     }
@@ -122,7 +120,10 @@ impl MpQuicSession {
     }
 
     /// Send bonded – split data across all active paths for N× throughput
-    pub fn send_bonded(&self, data_len: usize) -> Result<Vec<(String, usize, Duration)>, MpQuicError> {
+    pub fn send_bonded(
+        &self,
+        data_len: usize,
+    ) -> Result<Vec<(String, usize, Duration)>, MpQuicError> {
         let active_names = self.active_interfaces.read().clone();
         if active_names.is_empty() {
             return Err(MpQuicError::NoPath);

@@ -15,11 +15,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use aether_supervisor::{
-    core_adapters,
-    grpc,
-    routing,
-    runtime_preflight::RuntimePreflight,
-    telemetry::Collector,
+    core_adapters, grpc, routing, runtime_preflight::RuntimePreflight, telemetry::Collector,
     CoreSupervisor,
 };
 
@@ -40,18 +36,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // checked before constructing the supervisor so a bad deployment does not
     // expose even a transient unauthenticated control listener.
     if !mtls_enabled && !listen.ip().is_loopback() {
-        return Err(
-            std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                concat!(
-                    "refusing to bind plaintext gRPC on a non-loopback address; ",
-                    "set AETHER_MTLS_ENABLED=true and provide ",
-                    "AETHER_SUPERVISOR_TLS_CERT, AETHER_SUPERVISOR_TLS_KEY, and ",
-                    "AETHER_SUPERVISOR_CLIENT_CA",
-                ),
-            )
-            .into(),
-        );
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            concat!(
+                "refusing to bind plaintext gRPC on a non-loopback address; ",
+                "set AETHER_MTLS_ENABLED=true and provide ",
+                "AETHER_SUPERVISOR_TLS_CERT, AETHER_SUPERVISOR_TLS_KEY, and ",
+                "AETHER_SUPERVISOR_CLIENT_CA",
+            ),
+        )
+        .into());
     }
 
     // Northflank and other managed runtimes can deny BPF/NET_ADMIN or bpffs.

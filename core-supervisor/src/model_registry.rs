@@ -708,7 +708,10 @@ mod tests {
             );
         }
         assert_eq!(registry.shadow_log().len(), SHADOW_LOG_CAPACITY);
-        assert_eq!(registry.total_shadow_decisions(), (SHADOW_LOG_CAPACITY + 1) as u64);
+        assert_eq!(
+            registry.total_shadow_decisions(),
+            (SHADOW_LOG_CAPACITY + 1) as u64
+        );
     }
 
     #[test]
@@ -724,9 +727,7 @@ mod tests {
         );
     }
 
-    fn make_adaptive_fallback_promotion_eligible(
-        registry: &ModelRegistry,
-    ) -> Result<(), String> {
+    fn make_adaptive_fallback_promotion_eligible(registry: &ModelRegistry) -> Result<(), String> {
         registry.load_unsigned_for_testing(ModelKind::AdaptiveFallback, "v1");
         let Some(past) = Instant::now().checked_sub(SHADOW_MIN_DURATION) else {
             return Err("test clock cannot represent the required shadow interval".to_string());

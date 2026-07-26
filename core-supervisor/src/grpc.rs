@@ -382,7 +382,10 @@ impl TlsServerConfig {
 
     fn into_tonic(self) -> ServerTlsConfig {
         ServerTlsConfig::new()
-            .identity(Identity::from_pem(self.certificate_pem, self.private_key_pem))
+            .identity(Identity::from_pem(
+                self.certificate_pem,
+                self.private_key_pem,
+            ))
             .client_ca_root(Certificate::from_pem(self.client_ca_pem))
     }
 }
@@ -489,7 +492,13 @@ mod tls_tests {
         std::fs::write(&client_ca, b"ca")?;
 
         let result = TlsServerConfig::from_paths(&certificate, &private_key, &client_ca);
-        assert!(matches!(result, Err(TlsConfigError::Empty { kind: "server private key", .. })));
+        assert!(matches!(
+            result,
+            Err(TlsConfigError::Empty {
+                kind: "server private key",
+                ..
+            })
+        ));
         Ok(())
     }
 

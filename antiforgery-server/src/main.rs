@@ -44,16 +44,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     if !mtls_enabled && !addr.ip().is_loopback() {
-        return Err(
-            std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                concat!(
-                    "refusing to bind plaintext anti-forgery gRPC on a non-loopback address; ",
-                    "set AETHER_MTLS_ENABLED=true and provide anti-forgery mTLS PEM paths",
-                ),
-            )
-            .into(),
-        );
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            concat!(
+                "refusing to bind plaintext anti-forgery gRPC on a non-loopback address; ",
+                "set AETHER_MTLS_ENABLED=true and provide anti-forgery mTLS PEM paths",
+            ),
+        )
+        .into());
     }
 
     let state = server::State::new(signer);
@@ -92,7 +90,9 @@ fn mtls_enabled_from_environment() -> Result<bool, std::io::Error> {
 
 fn signer_from_environment() -> Result<token::TokenSigner, std::io::Error> {
     match std::env::var("AETHER_ANTIFORGERY_SIGNING_KEY") {
-        Ok(encoded) => Ok(token::TokenSigner::from_secret_bytes(decode_secret_seed(&encoded)?)),
+        Ok(encoded) => Ok(token::TokenSigner::from_secret_bytes(decode_secret_seed(
+            &encoded,
+        )?)),
         Err(_) if development_mode() => {
             tracing::warn!("AETHER_DEV=true: using an ephemeral anti-forgery signing key");
             Ok(token::TokenSigner::generate())
@@ -173,9 +173,8 @@ mod tests {
 
     #[test]
     fn decodes_exactly_32_bytes_of_hex_key_material() -> Result<(), Box<dyn std::error::Error>> {
-        let seed = decode_secret_seed(
-            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
-        )?;
+        let seed =
+            decode_secret_seed("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")?;
         assert_eq!(
             hex(&seed),
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"

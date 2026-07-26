@@ -7,8 +7,8 @@
 //! Framing: [MAGIC 2 bytes][SEQ 2 bytes][LEN 2 bytes][DATA][CRC16 2 bytes]
 //! Real ICMP tunnel implementations (e.g. ptunnel) use similar framing.
 
-use std::collections::HashMap;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 
 /// ICMP tunnel frame magic.
 const MAGIC: u16 = 0xAE11;
@@ -94,7 +94,8 @@ impl IcmpTunnel {
     pub fn encapsulate(&mut self, data: &[u8]) -> Vec<u8> {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
-        self.bytes_encap.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.bytes_encap
+            .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
         encode_icmp_payload(seq, data)
     }
 
@@ -142,12 +143,18 @@ mod tests {
     fn reject_bad_magic() {
         let mut payload = encode_icmp_payload(1, b"test");
         payload[0] = 0x00;
-        assert_eq!(decode_icmp_payload(&payload).unwrap_err(), IcmpError::BadMagic);
+        assert_eq!(
+            decode_icmp_payload(&payload).unwrap_err(),
+            IcmpError::BadMagic
+        );
     }
 
     #[test]
     fn reject_truncated() {
-        assert_eq!(decode_icmp_payload(&[0xAE, 0x11, 0x00]).unwrap_err(), IcmpError::Truncated);
+        assert_eq!(
+            decode_icmp_payload(&[0xAE, 0x11, 0x00]).unwrap_err(),
+            IcmpError::Truncated
+        );
     }
 
     #[test]
@@ -155,7 +162,10 @@ mod tests {
         let mut payload = encode_icmp_payload(1, b"test");
         let last = payload.len() - 1;
         payload[last] ^= 0xFF;
-        assert_eq!(decode_icmp_payload(&payload).unwrap_err(), IcmpError::CrcMismatch);
+        assert_eq!(
+            decode_icmp_payload(&payload).unwrap_err(),
+            IcmpError::CrcMismatch
+        );
     }
 
     #[test]

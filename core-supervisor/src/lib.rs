@@ -29,13 +29,13 @@
 )]
 #![allow(missing_docs)] // public-API docs are written by hand where they count
 
+pub mod active_defense;
+pub mod active_probing_honeypot;
 pub mod advanced_integration;
 pub mod ai_dpi;
 pub mod ai_morph;
-pub mod anti_dpi;
-pub mod active_probing_honeypot;
-pub mod active_defense;
 pub mod anomaly_detector;
+pub mod anti_dpi;
 pub mod autoheal;
 pub mod blackout;
 pub mod buffer_replay;
@@ -50,6 +50,7 @@ pub mod domain_fronting;
 pub mod domestic_intel;
 pub mod dpi_forecast;
 pub mod ebpf;
+pub mod enterprise;
 pub mod error;
 pub mod failover;
 pub mod fallback_transport;
@@ -97,7 +98,6 @@ pub mod transparency;
 pub mod xdp_engine;
 pub mod zk_auth;
 pub mod zkp_auth;
-pub mod enterprise;
 
 // Generated gRPC bindings. We declare the modules to mirror the protobuf
 // package tree so prost's cross-package references (supervisor -> telemetry)

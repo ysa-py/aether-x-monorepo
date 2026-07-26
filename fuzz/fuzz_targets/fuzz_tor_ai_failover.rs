@@ -30,8 +30,7 @@ fuzz_target!(|data: &[u8]| {
     for chunk in data.chunks(8) {
         if chunk.len() >= 8 {
             let seed = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3],
-                chunk[4], chunk[5], chunk[6], chunk[7],
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
             ]);
             let fp = morpher.ja4_fingerprint(seed);
             assert!(!fp.extensions_order.is_empty());
@@ -41,8 +40,7 @@ fuzz_target!(|data: &[u8]| {
     // IAT jitter — just assert no panic.
     if data.len() >= 8 {
         let seed = u64::from_le_bytes([
-            data[0], data[1], data[2], data[3],
-            data[4], data[5], data[6], data[7],
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
         let _jitter = morpher.iat_jitter_ms(seed);
     }
@@ -50,7 +48,10 @@ fuzz_target!(|data: &[u8]| {
     // --- Transport registry ---
     let reg = aether_supervisor::tor::TransportRegistry::with_all_transports();
     let best = reg.select_best();
-    assert!(best.is_some(), "registry should have an available transport");
+    assert!(
+        best.is_some(),
+        "registry should have an available transport"
+    );
 
     // --- Failover bridge ---
     use aether_supervisor::failover::{FailoverBridge, TransportHandle};

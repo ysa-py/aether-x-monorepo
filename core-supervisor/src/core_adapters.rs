@@ -295,7 +295,9 @@ impl ManagedProcessAdapter {
                 reason: "opaque_config must be an object containing config_path".to_string(),
             });
         };
-        let Some(config_path) = object.get("config_path").and_then(serde_json::Value::as_str)
+        let Some(config_path) = object
+            .get("config_path")
+            .and_then(serde_json::Value::as_str)
         else {
             return Err(SupervisorError::InvalidConfig {
                 kind: self.kind,
@@ -309,12 +311,11 @@ impl ManagedProcessAdapter {
                 reason: "opaque_config.config_path must be absolute".to_string(),
             });
         }
-        let metadata = std::fs::metadata(&config_path).map_err(|error| {
-            SupervisorError::InvalidConfig {
+        let metadata =
+            std::fs::metadata(&config_path).map_err(|error| SupervisorError::InvalidConfig {
                 kind: self.kind,
                 reason: format!("cannot read config_path {}: {error}", config_path.display()),
-            }
-        })?;
+            })?;
         if !metadata.is_file() {
             return Err(SupervisorError::InvalidConfig {
                 kind: self.kind,
@@ -411,7 +412,9 @@ impl ProtocolCore for ManagedProcessAdapter {
 
     async fn stop(&self, handle: &CoreHandle, drain: bool, timeout: Duration) -> Result<()> {
         if drain {
-            return Err(SupervisorError::NotHotSwapCapable(handle.instance_id.clone()));
+            return Err(SupervisorError::NotHotSwapCapable(
+                handle.instance_id.clone(),
+            ));
         }
         let _lifecycle = self.lifecycle.lock().await;
         let (_, process) = self
@@ -437,7 +440,8 @@ impl ProtocolCore for ManagedProcessAdapter {
             .await?;
         let (config_path, probe_address) = self.launch_contract(&config)?;
         let replacement = self.spawn_process(&config, config_path, probe_address)?;
-        self.instances.insert(handle.instance_id.clone(), replacement);
+        self.instances
+            .insert(handle.instance_id.clone(), replacement);
         Ok(())
     }
 
@@ -482,7 +486,9 @@ impl ProtocolCore for ManagedProcessAdapter {
 
     async fn metrics(&self, handle: &CoreHandle) -> Result<CoreMetrics> {
         if !self.instances.contains_key(&handle.instance_id) {
-            return Err(SupervisorError::InstanceNotFound(handle.instance_id.clone()));
+            return Err(SupervisorError::InstanceNotFound(
+                handle.instance_id.clone(),
+            ));
         }
         // Do not fabricate connection counts or memory usage. The native core
         // statistics API remains the authority for those metrics.
@@ -500,12 +506,13 @@ impl ProtocolCore for ManagedProcessAdapter {
 
 #[cfg(feature = "real_cores")]
 fn loopback_probe_address(listen_addr: &str, kind: CoreKind) -> Result<SocketAddr> {
-    let address = listen_addr
-        .parse::<SocketAddr>()
-        .map_err(|error| SupervisorError::InvalidConfig {
-            kind,
-            reason: format!("protocol.listen_addr must be an explicit socket address: {error}"),
-        })?;
+    let address =
+        listen_addr
+            .parse::<SocketAddr>()
+            .map_err(|error| SupervisorError::InvalidConfig {
+                kind,
+                reason: format!("protocol.listen_addr must be an explicit socket address: {error}"),
+            })?;
     if address.port() == 0 {
         return Err(SupervisorError::InvalidConfig {
             kind,

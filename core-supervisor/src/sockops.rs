@@ -319,7 +319,10 @@ mod tests {
 
         let latency = mgr.redirect_msg(&k1, &k2, 1400).unwrap();
         // Sub-millisecond expected (<1000us in mock, real eBPF even less)
-        assert!(latency.as_micros() < 5000, "zero-copy should be sub-ms, got {latency:?}");
+        assert!(
+            latency.as_micros() < 5000,
+            "zero-copy should be sub-ms, got {latency:?}"
+        );
 
         let stats = mgr.stats();
         assert_eq!(stats.total_redirects, 1);

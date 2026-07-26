@@ -20,10 +20,10 @@ pub struct TcpSample {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnomalyPrediction {
     Stable,
-    RisingLoss,      // loss increasing, will drop soon
-    HighVariance,    // RTT variance high, congestion or DPI
-    AckStall,        // ACK delays growing, possible RST injection
-    DropImminent,    // drop predicted within 200ms
+    RisingLoss,   // loss increasing, will drop soon
+    HighVariance, // RTT variance high, congestion or DPI
+    AckStall,     // ACK delays growing, possible RST injection
+    DropImminent, // drop predicted within 200ms
 }
 
 /// Micro-model output
@@ -141,7 +141,9 @@ impl AnomalyDetector {
         if let Some(r) = self.latest() {
             matches!(
                 r.prediction,
-                AnomalyPrediction::DropImminent | AnomalyPrediction::RisingLoss | AnomalyPrediction::AckStall
+                AnomalyPrediction::DropImminent
+                    | AnomalyPrediction::RisingLoss
+                    | AnomalyPrediction::AckStall
             ) && r.confidence > 0.7
         } else {
             false

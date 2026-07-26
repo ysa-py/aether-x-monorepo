@@ -6,7 +6,7 @@
 //! This module extends zkp_auth.rs with Groth16-style interface and re-exports.
 
 pub use crate::zkp_auth::{
-    Commitment, ZkError, ZkProof, ZkVerificationResult, ZkpVerifier, create_proof,
+    create_proof, Commitment, ZkError, ZkProof, ZkVerificationResult, ZkpVerifier,
 };
 
 use crate::zkp_auth::{Commitment as InnerCommitment, ZkpVerifier as InnerVerifier};
@@ -47,7 +47,11 @@ impl ZkAuthEngine {
     }
 
     /// Verify Groth16 membership proof
-    pub fn verify_groth16(&self, proof: &Groth16Proof, now_unix: i64) -> Result<ZkVerificationResult, ZkError> {
+    pub fn verify_groth16(
+        &self,
+        proof: &Groth16Proof,
+        now_unix: i64,
+    ) -> Result<ZkVerificationResult, ZkError> {
         self.verifier.verify_proof(&proof.inner, now_unix)
     }
 
@@ -116,10 +120,14 @@ mod tests {
             bytes_total: 50 * 1024 * 1024 * 1024,
         };
 
-        let ok = engine.verify_bulletproof(&range_proof, 10 * 1024 * 1024 * 1024).unwrap();
+        let ok = engine
+            .verify_bulletproof(&range_proof, 10 * 1024 * 1024 * 1024)
+            .unwrap();
         assert!(ok);
 
-        let not_ok = engine.verify_bulletproof(&range_proof, 60 * 1024 * 1024 * 1024).unwrap();
+        let not_ok = engine
+            .verify_bulletproof(&range_proof, 60 * 1024 * 1024 * 1024)
+            .unwrap();
         assert!(!not_ok);
     }
 }

@@ -140,7 +140,11 @@ impl EnterpriseEngine {
 
     /// One fully automatic tick: handles blackout, picks best transport, applies chaff, ensures QUIC migration, updates eBPF maps
     /// Also runs anomaly detector for proactive failover 200ms before drop, and deterministic fallback chain <200ms
-    pub fn tick(&self, signal: &BlackoutSignal, probe_candidates: Vec<ProbeCandidate>) -> EnterpriseTickResult {
+    pub fn tick(
+        &self,
+        signal: &BlackoutSignal,
+        probe_candidates: Vec<ProbeCandidate>,
+    ) -> EnterpriseTickResult {
         // 1. Anomaly detection — proactive failover 200ms before drop
         let anomaly = self.anomaly_detector.predict();
         let should_proactive = self.anomaly_detector.should_failover_early();
@@ -159,14 +163,15 @@ impl EnterpriseEngine {
         };
 
         // 4. Deterministic fallback chain if needed and within budget
-        let fallback_result = if blackout_action.base.level != crate::blackout::IsolationLevel::Normal {
-            Some(
-                self.deterministic_fallback
-                    .fallback("edge-auto", &self.config.core_addr),
-            )
-        } else {
-            None
-        };
+        let fallback_result =
+            if blackout_action.base.level != crate::blackout::IsolationLevel::Normal {
+                Some(
+                    self.deterministic_fallback
+                        .fallback("edge-auto", &self.config.core_addr),
+                )
+            } else {
+                None
+            };
 
         // 5. Reverse relay reconnect
         let relay_reconnects = self.reverse_relay.tick(&self.config.core_addr);
@@ -337,7 +342,12 @@ mod tests {
             engine.observe_tcp(100, 50, true);
         }
         let result2 = engine.tick(&normal_signal(), vec![]);
-        assert!(result2.should_proactive_failover || result2.anomaly_prediction.contains("RisingLoss") || result2.anomaly_prediction.contains("DropImminent") || result2.anomaly_prediction.contains("AckStall"));
+        assert!(
+            result2.should_proactive_failover
+                || result2.anomaly_prediction.contains("RisingLoss")
+                || result2.anomaly_prediction.contains("DropImminent")
+                || result2.anomaly_prediction.contains("AckStall")
+        );
     }
 
     #[test]

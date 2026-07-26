@@ -29,7 +29,12 @@ impl ActiveDefenseEngine {
     }
 
     /// eBPF detection: if src sends many ClientHellos without completing handshake, or JA3 fingerprint is scanner-like
-    pub fn detect_probe(&self, src_ip: &str, client_hello_count: u32, completed_handshake: bool) -> ProbeVerdict {
+    pub fn detect_probe(
+        &self,
+        src_ip: &str,
+        client_hello_count: u32,
+        completed_handshake: bool,
+    ) -> ProbeVerdict {
         // Track source
         {
             let mut map = self.probe_sources.write();
@@ -55,7 +60,12 @@ impl ActiveDefenseEngine {
     }
 
     /// Handle connection with auto detection + honeypot redirect
-    pub fn handle(&self, src_ip: &str, client_hello_count: u32, completed: bool) -> ActiveDefenseAction {
+    pub fn handle(
+        &self,
+        src_ip: &str,
+        client_hello_count: u32,
+        completed: bool,
+    ) -> ActiveDefenseAction {
         let verdict = self.detect_probe(src_ip, client_hello_count, completed);
         let honeypot_action = self.honeypot.handle_connection(src_ip, verdict);
 

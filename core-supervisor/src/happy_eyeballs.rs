@@ -7,7 +7,7 @@
 //! Guarantees: user gets the first working path in ~one RTT, not N serial timeouts.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -130,7 +130,10 @@ impl HappyEyeballs {
 
     #[must_use]
     pub fn with_probe_fn(config: HappyEyeballsConfig, f: ProbeFn) -> Self {
-        Self { config, probe_fn: f }
+        Self {
+            config,
+            probe_fn: f,
+        }
     }
 
     /// Race candidates, return first successful outcome (if any) and all outcomes.
@@ -338,7 +341,10 @@ mod tests {
         let result = racer.race(candidates);
         let elapsed = start.elapsed();
         assert!(result.is_success());
-        assert!(elapsed < Duration::from_secs(1), "racing took too long: {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "racing took too long: {elapsed:?}"
+        );
     }
 
     #[test]
