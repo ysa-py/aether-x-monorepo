@@ -1,0 +1,279 @@
+name: ci
+
+# The single source of truth for the Aether-X verification pipeline.
+# Five parallel gate jobs + a final `gate` job (the ONLY required status check).
+# All must pass for a merge. Every gate runs independently for fast feedback.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  GO_VERSION: "1.24"
+  NODE_VERSION: "20"
+
+jobs:
+  # ── Proto contract (buf lint + stubs up to date) ──────────────────────────
+  proto:
+    name: proto (buf lint + stubs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: buf lint
+        working-directory: api/proto
+        run: buf lint --error-format=json
+      - name: verify committed Go stubs are current
+        working-directory: api/proto
+        run: |
+          buf generate
+          if ! git diff --exit-code -- ../../control-plane/api/gen/go; then
+            echo "::error::Generated stubs stale. Run 'make buf' and commit."
+            exit 1
+          fi
+
+  # ── Rust data plane (stable fmt/clippy/test + nightly fuzz) ───────────────
+  rust-gate:
+    name: rust (fmt + clippy + test + fuzz build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: swatinem/rust-cache@v2
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy (workspace, deny warnings)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: cargo test (workspace)
+        run: cargo test --workspace --all-features --no-fail-fast
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: cargo fuzz build (AddressSanitizer instrumentation)
+        run: RUSTUP_TOOLCHAIN=nightly cargo fuzz build
+
+  # ── Go control plane (vet + race + OpenAPI) ───────────────────────────────
+  go-gate:
+    name: go (vet + race + OpenAPI)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: control-plane/go.sum
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: go vet
+        run: go vet ./...
+      - name: go test -race
+        run: go test -race ./...
+      - name: gofmt check
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "::error::gofmt issues: $out"; exit 1; fi
+      - name: OpenAPI spec generation
+        run: |
+          make -C .. openapi-gen
+          if ! git diff --exit-code -- ../docs; then
+            echo "::error::OpenAPI docs stale. Run 'make openapi-gen'."
+            exit 1
+          fi
+
+  # ── Next.js dashboard (codegen + build + Playwright E2E) ──────────────────
+  dashboard-gate:
+    name: dashboard (tsc + build + Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aether-x-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: aether-x-dashboard/package-lock.json
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Generate API types from OpenAPI
+        run: npm run generate:api
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Next.js build
+        run: npx next build
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox
+      - name: Playwright E2E
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: aether-x-dashboard/playwright-report/
+          if-no-files-found: ignore
+
+  # ── Performance (k6 load/stress against stub) ─────────────────────────────
+  k6-gate:
+    name: k6 (REST + SSE load)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          curl -sL https://github.com/grafana/k6/releases/download/v0.55.0/k6-v0.55.0-linux-amd64.tar.gz | tar -xz
+          sudo mv k6-v0.55.0-linux-amd64/k6 /usr/local/bin/
+          k6 version
+      - name: Load test (REST + SSE, hermetic stub)
+        run: make load-test
+
+
+  # ── Deployment artifacts (images actually build; manifests actually render) ─
+  # Added because nothing validated deploy/ and it had silently rotted: the
+  # control-plane image COPYed a non-existent api/gen/, the core-supervisor
+  # image omitted its Cargo workspace root and routing/ path dependency, two
+  # of the four services had no Dockerfile at all, and the Helm chart exported
+  # Secret keys the Go binary never reads. Every one of those is caught here.
+  deploy-gate:
+    name: deploy (docker build + helm render)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # Build every image from the MONOREPO ROOT, which is the context each
+      # Dockerfile documents. Load into the local daemon, do not push.
+      - name: Build control-plane image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/control-plane.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build core-supervisor image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/core-supervisor.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build antiforgery-server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/antiforgery-server.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build dashboard image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/dashboard.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+      - name: helm lint
+        run: helm lint deploy/helm/aether-x
+      - name: helm template renders valid YAML
+        run: |
+          set -euo pipefail
+          helm template aether-x deploy/helm/aether-x > /tmp/rendered.yaml
+          python3 -c "import yaml,sys; d=[x for x in yaml.safe_load_all(open('/tmp/rendered.yaml')) if x]; print(f'{len(d)} documents render'); sys.exit(0 if d else 1)"
+      - name: Secret keys must match the names the code reads
+        run: |
+          set -euo pipefail
+          for k in AETHER_JWT_SECRET AETHER_CLICKHOUSE_DSN AETHER_POSTGRES_DSN AETHER_REDIS_ADDR; do
+            grep -q "$k" /tmp/rendered.yaml || { echo "::error::$k missing from rendered chart"; exit 1; }
+          done
+          echo "All AETHER_* keys present."
+      - name: An empty jwtSecret must fail the render
+        run: |
+          if helm template aether-x deploy/helm/aether-x --set controlPlane.jwtSecret="" >/dev/null 2>&1; then
+            echo "::error::empty jwtSecret rendered successfully; the required() guard is gone"
+            exit 1
+          fi
+          echo "required() guard works."
+      - name: Northflank manifest is valid YAML and complete
+        run: |
+          python3 - <<'PY_EOF'
+          import yaml, os, sys
+          d = yaml.safe_load(open('deploy/northflank/northflank.yaml'))
+          names = {s['name'] for s in d['services']}
+          assert names == {'control-plane','core-supervisor','antiforgery-server','dashboard'}, names
+          for s in d['services']:
+              df = s['buildimage']['dockerfile']
+              assert os.path.exists(df), f'missing {df}'
+          by_name = {s['name']: s for s in d['services']}
+          core_env = by_name['core-supervisor']['deployment']['environment']
+          anti_env = by_name['antiforgery-server']['deployment']['environment']
+          control_env = by_name['control-plane']['deployment']['environment']
+          assert core_env['AETHER_MTLS_ENABLED'] == 'true', 'supervisor must use mTLS'
+          assert anti_env['AETHER_MTLS_ENABLED'] == 'true', 'anti-forgery must use mTLS'
+          assert control_env['AETHER_MTLS_ENABLED'] == 'true', 'control plane must use mTLS'
+          assert control_env['AETHER_DEV'] == 'false', 'public deployment must not bypass JWT authentication'
+          assert control_env.get('AETHER_JWT_KEY_ID'), 'control plane must name its active JWT key'
+          assert [port['internal_port'] for port in by_name['core-supervisor']['deployment']['ports']] == [7070], 'do not publish unbound proxy ports'
+          assert [port['internal_port'] for port in by_name['control-plane']['deployment']['ports']] == [8080], 'control-plane metrics share its HTTP listener'
+          for key in ('AETHER_SUPERVISOR_CERT', 'AETHER_SUPERVISOR_KEY', 'AETHER_SUPERVISOR_CA'):
+              assert control_env.get(key), f'control plane missing {key}'
+          for key in ('AETHER_ANTIFORGERY_CERT', 'AETHER_ANTIFORGERY_KEY', 'AETHER_ANTIFORGERY_CA'):
+              assert control_env.get(key), f'control plane missing {key}'
+          if control_env.get('AETHER_ENABLE_DYNAMIC_SUBS') == 'true':
+              assert control_env.get('AETHER_NODE_CATALOG_FILE'), 'subscription delivery requires a verified node catalog'
+              assert control_env.get('AETHER_NODE_CATALOG_RELOAD_INTERVAL'), 'subscription delivery requires a bounded catalog reload interval'
+          if control_env.get('AETHER_ENABLE_TELEMETRY_SCORING') == 'true':
+              assert control_env.get('AETHER_ENABLE_DYNAMIC_SUBS') == 'true', 'telemetry scoring requires verified subscription delivery'
+          signing_secret_groups = [
+              group for group in d['secret_groups']
+              if any(secret['name'] == 'AETHER_ANTIFORGERY_SIGNING_KEY' for secret in group['secrets'])
+          ]
+          assert len(signing_secret_groups) == 1, 'stable anti-forgery signing key must have one secret group'
+          assert signing_secret_groups[0]['attached_services'] == ['antiforgery-server'], 'signing seed must be least-privilege'
+          assert 'aether-antiforgery-secrets' in by_name['antiforgery-server']['secret_groups'], 'anti-forgery service must mount its signing seed'
+          addons = {a['name'] for a in d['addons']}
+          assert addons == {'aether-postgres','aether-redis','aether-clickhouse'}, addons
+          print('northflank.yaml OK:', len(names), 'services,', len(addons), 'addons')
+          PY_EOF
+
+  # ── Final gate: the ONLY required status check ────────────────────────────
+  gate:
+    name: gate (ALL GATES OK)
+    runs-on: ubuntu-latest
+    needs: [proto, rust-gate, go-gate, dashboard-gate, k6-gate, deploy-gate]
+    if: always()
+    steps:
+      - name: Require every upstream job to have succeeded
+        run: |
+          set -euo pipefail
+          echo "proto=${{ needs.proto.result }} rust=${{ needs.rust-gate.result }} go=${{ needs.go-gate.result }} dashboard=${{ needs.dashboard-gate.result }} k6=${{ needs.k6-gate.result }} deploy=${{ needs.deploy-gate.result }}"
+          ok=1
+          [ "${{ needs.proto.result }}"         = "success" ] || ok=0
+          [ "${{ needs.rust-gate.result }}"     = "success" ] || ok=0
+          [ "${{ needs.go-gate.result }}"       = "success" ] || ok=0
+          [ "${{ needs.dashboard-gate.result }}" = "success" ] || ok=0
+          [ "${{ needs.k6-gate.result }}"       = "success" ] || ok=0
+          [ "${{ needs.deploy-gate.result }}"   = "success" ] || ok=0
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::One or more gates failed."
+            exit 1
+          fi
+          echo "ALL GATES OK."
