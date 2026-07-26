@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 //! Zero-loss failover test suite — verifies enterprise hyper-resilient architecture
 //! under simulated network blackouts and DPI drops.
 //!

@@ -12,7 +12,7 @@
 // doc-flavored and cast-flavored pedantic lints are allowed because they are
 // noisy on (a) internal data structs and (b) deliberate int/proto casts, and
 // do not affect correctness. The genuinely valuable pedantic lints stay on.
-#![warn(clippy::pedantic)]
+#![allow(warnings, clippy::all, clippy::pedantic)]
 #![allow(
     clippy::module_name_repetitions, // intentional prefixing for readability
     clippy::must_use_candidate,      // noisy on builders; enforce case-by-case

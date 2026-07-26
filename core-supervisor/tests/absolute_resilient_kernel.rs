@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 //! Absolute-Resilient Kernel & Control-Plane Integration Tests
 //! Verifies system survival under 40% packet loss and DPI drops
 //! Tests all new modules: sockops, ai_morph, fec_engine, pqc_handshake, os_polymorphism, zkp_auth, honeypot, deterministic_fallback

@@ -3,15 +3,19 @@ managed:
   enabled: true
 inputs:
   - directory: .
+    paths:
+      - aether/antiforgery/v1/antiforgery.proto
+      - aether/supervisor/v1/supervisor.proto
+      - aether/telemetry/v1/telemetry.proto
 plugins:
   # Go stubs go INSIDE the control-plane Go module so they resolve as
   # github.com/aether-x/control-plane/api/gen/go/... imports. (Run from api/proto,
   # so ../../control-plane is the monorepo's control-plane dir.)
-  - remote: buf.build/protocolbuffers/go:v1.34.2
+  - remote: buf.build/protocolbuffers/go:v1.36.11
     out: ../../control-plane/api/gen/go
     opt:
       - paths=source_relative
-  - remote: buf.build/grpc/go:v1.6.2
+  - remote: buf.build/grpc/go:v1.4.0
     out: ../../control-plane/api/gen/go
     opt:
       - paths=source_relative
