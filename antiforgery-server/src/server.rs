@@ -219,7 +219,7 @@ pub async fn serve(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tls_enabled = tls.is_some();
     let builder = Server::builder();
-    let builder = match tls {
+    let mut builder = match tls {
         Some(config) => builder.tls_config(config.into_tonic())?,
         None => builder,
     };

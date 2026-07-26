@@ -61,7 +61,7 @@ pub enum ModelMode {
 }
 
 /// Metadata about a loaded model artifact.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ModelArtifact {
     pub kind: ModelKind,
     pub version: String,

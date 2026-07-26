@@ -25,7 +25,13 @@
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,      // usize/u64 -> f64 for small counts/rates
     clippy::result_large_err,         // Status is a large Err; acceptable here
-    clippy::wildcard_imports          // used only in narrow test scopes
+    clippy::wildcard_imports,         // used only in narrow test scopes
+    clippy::redundant_else,           // kept where it mirrors branch intent
+    clippy::unreadable_literal,       // protocol constants match specs/tests
+    clippy::similar_names,            // paired RNG/model helper names are clear locally
+    unused_imports,                   // staged subsystems keep imports beside feature hooks
+    unused_variables,                 // mock adapters preserve real-call signatures
+    unused_mut                        // mock/test paths keep mutability where implementations grow
 )]
 #![allow(missing_docs)] // public-API docs are written by hand where they count
 

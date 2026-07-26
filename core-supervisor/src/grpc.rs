@@ -465,7 +465,7 @@ pub async fn serve(
     let svc = SupervisorServer::new(supervisor, collector, resolver);
     let tls_enabled = tls.is_some();
     let builder = Server::builder();
-    let builder = match tls {
+    let mut builder = match tls {
         Some(config) => builder.tls_config(config.into_tonic())?,
         None => builder,
     };

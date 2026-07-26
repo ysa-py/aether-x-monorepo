@@ -95,12 +95,13 @@ impl MpQuicSession {
 
         // Pick lowest RTT path for latency-sensitive, or both for throughput
         // Simplified: choose lowest RTT
-        let best = paths
-            .values()
-            .min_by_key(|p| p.rtt_ms)
-            .ok_or(MpQuicError::NoPath)?;
-
-        let iface_name = best.interface.name.clone();
+        let (iface_name, best_rtt_ms) = {
+            let best = paths
+                .values()
+                .min_by_key(|p| p.rtt_ms)
+                .ok_or(MpQuicError::NoPath)?;
+            (best.interface.name.clone(), best.rtt_ms)
+        };
         drop(paths);
 
         // Update stats
@@ -115,7 +116,7 @@ impl MpQuicSession {
             .fetch_add(data_len as u64, Ordering::Relaxed);
 
         // Simulate latency = RTT/2 + processing
-        let latency = Duration::from_millis((best.rtt_ms / 2) as u64 + 5);
+        let latency = Duration::from_millis((best_rtt_ms / 2) as u64 + 5);
         Ok((iface_name, latency))
     }
 

@@ -49,8 +49,8 @@ pub struct SubscriptionState {
     pub commitment: Commitment,
     pub expires_unix: i64,
     pub revoked: bool,
-    pub bytes_total: int64,
-    pub bytes_used: int64,
+    pub bytes_total: i64,
+    pub bytes_used: i64,
 }
 
 /// ZKP Verifier – validates proofs without learning token
