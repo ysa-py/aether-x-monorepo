@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package aether.distribution.v1;
+
+// Anti-enumeration node/bridge distribution service (Subsystem C).
+//
+// Two-tier pool model:
+//   - Public tier: unchanged /v1/transports catalog.
+//   - Rationed tier: held-back pool allocated per-identity, rate-limited.
+service DistributionService {
+  // Request a rationed-pool node for a verified identity.
+  rpc RequestRationedNode(RequestRationedNodeRequest) returns (RequestRationedNodeResponse);
+  // Report a node as burned (triggers proactive rotation).
+  rpc ReportBurned(ReportBurnedRequest) returns (ReportBurnedResponse);
+  // Get the rationed pool health.
+  rpc GetPoolHealth(GetPoolHealthRequest) returns (GetPoolHealthResponse);
+}
+
+message RequestRationedNodeRequest {
+  string identity_id = 1;
+}
+
+message RequestRationedNodeResponse {
+  string node_id = 1;
+  string address = 2;
+  string protocol = 3;
+  // Error code if allocation failed.
+  string error = 4;
+}
+
+message ReportBurnedRequest {
+  string node_id = 1;
+}
+
+message ReportBurnedResponse {
+  bool accepted = 1;
+  string error = 2;
+}
+
+message GetPoolHealthRequest {}
+
+message GetPoolHealthResponse {
+  int32 total_nodes = 1;
+  int32 available_nodes = 2;
+  int32 burned_nodes = 3;
+  int32 allocations_24h = 4;
+  int32 rotation_pending = 5;
+}

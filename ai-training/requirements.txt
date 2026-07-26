@@ -1,0 +1,9 @@
+# Aether-X AI Training Pipeline — Requirements
+#
+# This file lists the Python dependencies for the offline training pipeline.
+# These are NEVER installed in production images.
+#
+# CI rule: any Dockerfile under core-supervisor/ or control-plane/ that
+# installs Python or pip fails the build.
+
+numpy>=1.24.0

@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package aether.telemetry.v1;
+
+option go_package = "github.com/aether-x/control-plane/api/gen/go/aether/telemetry/v1;telemetryv1";// Telemetry schema emitted by every supervised core / node agent.
+//
+// Design goals:
+//   - ISP/ASN tagging is mandatory: Iranian ISPs implement DPI differently,
+//     so every event MUST be attributable to a carrier for per-ISP learning.
+//   - Fields are intentionally denormalized so the AI feature store (ClickHouse)
+//     can aggregate without joins under high ingestion rates.
+//   - One TelemetryEvent == one atomic observation (a connect attempt outcome,
+//     a reset, a DNS anomaly, a throughput sample, ...).
+
+// Iranian carrier taxonomy. Extend with care; the AI pipeline keys off these.
+// Value names are prefixed with the enum name (buf ENUM_VALUE_PREFIX); prost
+// strips that prefix, yielding clean Rust variants (Unspecified, Mci, ...).
+enum IspId {
+  ISP_ID_UNSPECIFIED = 0;
+  ISP_ID_MCI = 1;            // Hamrah-e-Aval (Mobile Communication Company of Iran)
+  ISP_ID_IRANCELL = 2;       // Irancell (MTN)
+  ISP_ID_RIGHTEL = 3;        // Rightel
+  ISP_ID_SHATEL = 4;         // Shatel (fixed broadband)
+  ISP_ID_TCI = 5;             // Telecommunication Company of Iran (Mokhaberat, ADSL)
+  ISP_ID_ASIATECH = 6;
+  ISP_ID_RESALAT = 7;
+  ISP_ID_OTHER = 99;
+}
+
+// What kind of observation this event records.
+enum EventKind {
+  EVENT_UNSPECIFIED = 0;
+  EVENT_CONNECT_SUCCESS = 1;
+  EVENT_CONNECT_FAIL = 2;
+  EVENT_TLS_HANDSHAKE_TRUNCATION = 3;   // server-side alert / early close mid-ClientHello
+  EVENT_TCP_RST_INJECTED = 4;           // suspicious RST pattern -> active DPI
+  EVENT_DNS_HIJACK = 5;                 // resolved IP differs from known-good anchor
+  EVENT_SNI_BLOCK = 6;                  // connection succeeds until SNI sent, then killed
+  EVENT_IP_BLOCK = 7;                   // full blackout to destination
+  EVENT_THROUGHPUT_SAMPLE = 8;          // periodic throughput/RTT probe
+  EVENT_PROTOCOL_SWITCH = 9;            // core supervisor changed active protocol
+}
+
+// Classification verdict produced (eventually) by the AI engine. Populated
+// only on the control-plane side after inference; nodes send raw events only.
+//
+// Note on timestamps: we use int64 unix-millis everywhere instead of
+// google.protobuf.Timestamp. This removes a fragile dependency on protobuf
+// well-known-type .proto files being on the include path at build time,
+// which is not guaranteed across developer machines.
+message CensorshipSignal {
+  double confidence = 1;          // [0,1]
+  string detected_class = 2;      // e.g. "deep_dpi_fingerprint", "sni_block"
+  int64 observed_at_unix_millis = 3;
+}
+
+message TelemetryEvent {
+  string node_id = 1;             // stable node identifier (UUID v7)
+  string instance_id = 2;         // supervised core instance
+  string protocol_id = 3;         // e.g. "reality-vision", "hysteria2", "tuic-v5"
+  IspId isp = 4;
+  uint32 asn = 5;                 // raw ASN as fallback / cross-check
+  string asn_org = 6;             // human readable, e.g. "Mobile Communication Company of Iran"
+
+  EventKind event = 7;
+  int64 ts_unix_millis = 8;       // epoch milliseconds UTC
+
+  // Connection outcome detail.
+  bool   success = 9;
+  int32  rtt_ms = 10;             // median RTT of the probe, -1 if unknown
+  double throughput_bps = 11;     // measured goodput for THROUGHPUT_SAMPLE
+
+  // Free-form but schema-validated key/value context (e.g. dest host, exit geo).
+  map<string, string> context = 12;
+
+  CensorshipSignal signal = 13;   // optional, control-plane enriched
+}
+
+// A batched stream wrapper so the supervisor can flush efficiently.
+message TelemetryBatch {
+  repeated TelemetryEvent events = 1;
+}

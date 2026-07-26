@@ -1,0 +1,134 @@
+{{- if .Values.controlPlane.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "aetherx.fullname" . }}-control-plane
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+type: Opaque
+stringData:
+  # These keys are injected verbatim via envFrom, so they MUST match the names
+  # read by control-plane/internal/config/config.go. They previously read
+  # JWT_SECRET / CLICKHOUSE_DSN, which the binary never looks up: the control
+  # plane would abort at startup with "AETHER_JWT_SECRET must be >=32 bytes"
+  # while silently falling back to a localhost ClickHouse DSN.
+  AETHER_JWT_SECRET: {{ required "controlPlane.jwtSecret must be set to a >=32-byte secret" .Values.controlPlane.jwtSecret | quote }}
+  AETHER_CLICKHOUSE_DSN: {{ printf "clickhouse://%s:%s@%s-clickhouse:9000/%s" .Values.clickhouse.user .Values.clickhouse.password (include "aetherx.fullname" .) .Values.clickhouse.database | quote }}
+  AETHER_POSTGRES_DSN: {{ .Values.postgres.dsn | quote }}
+  AETHER_REDIS_ADDR: {{ .Values.redis.addr | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aetherx.fullname" . }}-control-plane
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  {{- if not .Values.controlPlane.autoscaling.enabled }}
+  replicas: {{ .Values.controlPlane.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "aetherx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      labels:
+        {{- include "aetherx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: control-plane
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: control-plane
+          image: {{ include "aetherx.imageRef" (dict "root" . "image" .Values.controlPlane.image) }}
+          imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "aetherx.fullname" . }}-control-plane
+          env:
+            - name: AETHER_HTTP_ADDR
+              value: {{ .Values.controlPlane.httpAddr | quote }}
+            - name: AETHER_SUPERVISOR_ADDR
+              value: {{ .Values.controlPlane.supervisorAddr | quote }}
+            - name: AETHER_ANTIFORGERY_ADDR
+              value: {{ .Values.controlPlane.antiforgeryAddr | quote }}
+            - name: AETHER_NODE_ID
+              value: {{ .Values.controlPlane.nodeId | quote }}
+            - name: AETHER_MTLS_ENABLED
+              value: {{ .Values.controlPlane.mtlsEnabled | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+      {{- with .Values.controlPlane.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aetherx.fullname" . }}-control-plane
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "aetherx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if .Values.controlPlane.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "aetherx.fullname" . }}-control-plane
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "aetherx.fullname" . }}-control-plane
+  minReplicas: {{ .Values.controlPlane.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.controlPlane.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.controlPlane.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

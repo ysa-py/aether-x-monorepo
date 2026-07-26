@@ -1,0 +1,96 @@
+{
+  "version": "1.1",
+  "clients": [
+    {
+      "id": "hiddify",
+      "displayName": "Hiddify",
+      "platforms": ["android", "ios", "windows", "macos", "linux"],
+      "scheme": "hiddify://install-sub?url={encoded_url}#{name}",
+      "status": "confirmed",
+      "sourceCheckedAt": "2026-07-24",
+      "icon": "🛡️"
+    },
+    {
+      "id": "v2rayng",
+      "displayName": "v2rayNG",
+      "platforms": ["android"],
+      "scheme": "v2rayng://install-sub?url={encoded_url}&name={name}",
+      "status": "confirmed",
+      "sourceCheckedAt": "2026-07-24",
+      "icon": "🚀"
+    },
+    {
+      "id": "shadowrocket",
+      "displayName": "Shadowrocket",
+      "platforms": ["ios"],
+      "scheme": "sub://{base64_url}",
+      "status": "confirmed",
+      "sourceCheckedAt": "2026-07-24",
+      "note": "base64, not URL-encoded",
+      "icon": "🚀"
+    },
+    {
+      "id": "v2raytun",
+      "displayName": "v2RayTun",
+      "platforms": ["android", "ios", "windows", "macos"],
+      "scheme": "v2raytun://import/{url}",
+      "status": "confirmed",
+      "sourceCheckedAt": "2026-07-24",
+      "icon": "🌐"
+    },
+    {
+      "id": "clash",
+      "displayName": "Clash / Mihomo / FlClash",
+      "platforms": ["android", "windows", "macos", "linux"],
+      "scheme": "clash://install-config?url={encoded_url}&name={name}",
+      "status": "confirmed",
+      "sourceCheckedAt": "2026-07-24",
+      "icon": "⚡"
+    },
+    {
+      "id": "clashx",
+      "displayName": "ClashX",
+      "platforms": ["macos"],
+      "scheme": "clashx://install-config?url={encoded_url}",
+      "status": "confirmed",
+      "sourceCheckedAt": "2026-07-24",
+      "icon": "🍎"
+    },
+    {
+      "id": "karing",
+      "displayName": "Karing",
+      "platforms": ["ios", "android", "windows", "macos"],
+      "scheme": null,
+      "status": "verify-before-ship",
+      "note": "Supports Clash/sing-box/V2Ray import; no confirmed custom scheme",
+      "icon": "🛡️"
+    },
+    {
+      "id": "nekobox",
+      "displayName": "NekoBox",
+      "platforms": ["android", "windows", "macos", "linux"],
+      "scheme": null,
+      "status": "verify-before-ship",
+      "note": "Accepts manual subscription-URL paste; no confirmed deep-link",
+      "icon": "🐱"
+    },
+    {
+      "id": "streisand",
+      "displayName": "Streisand",
+      "platforms": ["ios"],
+      "scheme": null,
+      "status": "verify-before-ship",
+      "note": "Check current App Store listing",
+      "icon": "🎵"
+    },
+    {
+      "id": "singbox",
+      "displayName": "Sing-box (official)",
+      "platforms": ["android", "windows", "macos", "linux"],
+      "scheme": null,
+      "status": "verify-before-ship",
+      "note": "Accepts manual subscription-URL paste",
+      "icon": "📦"
+    }
+  ]
+}

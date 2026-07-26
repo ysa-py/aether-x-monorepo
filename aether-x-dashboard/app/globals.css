@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Dark NOC surfaces (RGB triplets). */
+  --noc-bg: 6 8 14;
+  --noc-panel: 14 18 28;
+  --noc-edge: 38 46 64;
+  --noc-muted: 130 142 164;
+  --noc-fg: 226 232 240;
+
+  /* RGB ambient accents: Neon Cyan, Amber Warning, Crimson Alert, Emerald Pass. */
+  --accent-cyan: 0 240 255;
+  --accent-amber: 255 184 0;
+  --accent-crimson: 255 56 96;
+  --accent-emerald: 0 229 160;
+
+  /* Font stacks (graceful fallback if the webfont is absent). */
+  --font-vazirmatn: "Vazirmatn", "Tahoma", system-ui, sans-serif;
+  --font-jetbrains: "JetBrains Mono", ui-monospace, monospace;
+  --font-geist: "Geist", system-ui, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+  background: rgb(var(--noc-bg));
+  color: rgb(var(--noc-fg));
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Subtle ambient grid backdrop for the NOC feel. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(var(--accent-cyan) / 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--accent-cyan) / 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 50% 0%, black, transparent 75%);
+}
+
+/* Glassmorphism panel utility. */
+@layer components {
+  .glass {
+    @apply border border-noc-edge/70 bg-noc-panel/70 shadow-glow;
+    backdrop-filter: blur(12px);
+  }
+  .glass-hover {
+    @apply transition-colors duration-200 hover:border-accent-cyan/60;
+  }
+}
+
+/* RTL/LTR helpers: text alignment follows document direction automatically. */
+[dir="rtl"] {
+  font-family: var(--font-vazirmatn), system-ui, sans-serif;
+}
+[dir="ltr"] {
+  font-family: var(--font-jetbrains), var(--font-geist), system-ui, sans-serif;
+}
+
+/* Accessible focus ring (WCAG). */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-cyan));
+  outline-offset: 2px;
+}
+
+/* Particle stream animation along topology paths. */
+@keyframes flow {
+  to {
+    offset-distance: 100%;
+  }
+}
+.particle {
+  offset-path: var(--particle-path);
+  animation: flow var(--particle-duration, 2s) linear infinite;
+  animation-delay: var(--particle-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .particle {
+    animation: none;
+  }
+}

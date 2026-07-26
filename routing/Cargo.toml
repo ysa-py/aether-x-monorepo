@@ -1,0 +1,22 @@
+[package]
+name = "aether-routing"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+description = "Aether-X Iran-aware routing engine: smart domestic/foreign split + rule-set auto-update"
+license = "Proprietary"
+publish = false
+
+[lib]
+name = "aether_routing"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ipnet = { version = "2", features = ["serde"] }
+thiserror = "1"
+
+[dev-dependencies]
+proptest = "1"
+ipnet = "2"

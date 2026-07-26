@@ -1,0 +1,27 @@
+[package]
+name = "aether-antiforgery-server"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+description = "Aether-X anti-forgery gRPC service: exposes the antiforgery core to the control plane"
+license = "Proprietary"
+publish = false
+
+[[bin]]
+name = "aether-antiforgery"
+path = "src/main.rs"
+
+[dependencies]
+aether-antiforgery = { path = "../antiforgery" }
+tokio = { version = "1.39", features = ["full"] }
+tonic = { version = "0.12", features = ["tls", "tls-roots", "transport"] }
+prost = "0.13"
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+parking_lot = "0.12"
+rand = "0.8"
+
+[build-dependencies]
+tonic-build = "0.12"

@@ -1,0 +1,15 @@
+apiVersion: v2
+name: aether-x
+description: Aether-X — nation-state censorship circumvention platform (control + data plane + telemetry + NOC dashboard).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - proxy
+  - censorship-circumvention
+  - vpn
+  - noc
+  - dpi
+home: https://github.com/aether-x/aether-x
+maintainers:
+  - name: Aether-X Maintainers

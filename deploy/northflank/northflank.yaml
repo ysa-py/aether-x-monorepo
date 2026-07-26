@@ -1,0 +1,422 @@
+# Aether-X Absolute-Resilient Kernel & Control-Plane — Northflank Deployment Manifest
+# Version: Enterprise Quantum 999... — Absolute, Non-Blocking, Zero-Disconnection
+# Covers:
+# - Data-plane Rust & eBPF: sockops.rs, ai_morph.rs, fec_engine.rs, pqc_handshake.rs, os_polymorphism.rs, zkp_auth.rs, active_probing_honeypot.rs, deterministic_fallback.rs
+# - Control-plane Go: edge_hopper.go, mesh_orchestrator.go, out_of_band.go, telemetry_engine.go
+# - Plus all previous: reverse relay, fallback chain, SNI whitelist, domain fronting, eBPF morph, chaff, Happy Eyeballs v2, QUIC migration
+# - 4 services, 3 databases, explicit capabilities, and graceful fallback
+#
+# SECURITY PRECONDITION: the internal gRPC services are mTLS-only. Before
+# applying this template, mount the CA and the per-service PEM files at the
+# paths referenced below. See deploy/northflank/README.md. The processes fail
+# closed if those files are absent; do not change AETHER_MTLS_ENABLED to false
+# for an internal service address.
+
+project: aether-x
+
+addons:
+  - name: aether-postgres
+    type: postgresql
+    version: "16"
+    tls_enabled: true
+    resources:
+      cpu: 1000m
+      memory: 2Gi
+    persistence:
+      storage: 20Gi
+    billing:
+      deployment_plan: nf-database-40
+    exposes_as: AETHER_POSTGRES_DSN
+    environment:
+      POSTGRES_DB: aether
+      POSTGRES_USER: aether
+
+  - name: aether-redis
+    type: redis
+    version: "7"
+    tls_enabled: true
+    resources:
+      cpu: 500m
+      memory: 1Gi
+    persistence:
+      storage: 4Gi
+    billing:
+      deployment_plan: nf-database-20
+    exposes_as: AETHER_REDIS_ADDR
+
+  - name: aether-clickhouse
+    type: clickhouse
+    version: "24.3"
+    resources:
+      cpu: 2000m
+      memory: 4Gi
+    persistence:
+      storage: 20Gi
+    environment:
+      CLICKHOUSE_USER: aether
+      CLICKHOUSE_DB: aether
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    billing:
+      deployment_plan: nf-database-60
+    exposes_as: AETHER_CLICKHOUSE_DSN
+
+secret_groups:
+  - name: aether-secrets
+    linked_addons:
+      - addon: aether-postgres
+        as: AETHER_POSTGRES_DSN
+      - addon: aether-redis
+        as: AETHER_REDIS_ADDR
+      - addon: aether-clickhouse
+        as: AETHER_CLICKHOUSE_DSN
+    secrets:
+      - name: AETHER_JWT_SECRET
+        generate: "hex:32"
+      - name: AETHER_REALITY_PRIVATE_KEY
+        generate: "hex:32"
+      - name: AETHER_SHADOWTLS_PASSWORD
+        generate: "hex:16"
+      - name: AETHER_PQC_SEED
+        generate: "hex:32"
+      - name: AETHER_ZKP_BLINDING
+        generate: "hex:32"
+      - name: AETHER_TELEGRAM_BOT_TOKEN
+        generate: "hex:32"
+    attached_services:
+      - control-plane
+      - core-supervisor
+      - antiforgery-server
+
+  # Least privilege: only the signing service receives this stable Ed25519
+  # seed. Never rotate it without a planned verification-key migration.
+  - name: aether-antiforgery-secrets
+    secrets:
+      - name: AETHER_ANTIFORGERY_SIGNING_KEY
+        generate: "hex:32"
+    attached_services:
+      - antiforgery-server
+
+services:
+  - name: core-supervisor
+    type: combined
+    buildimage:
+      dockerfile: deploy/docker/core-supervisor.Dockerfile
+      build_context: /
+    deployment:
+      instances: 2
+      external:
+        deploy_on_change: true
+      resources:
+        cpu: 2000m
+        memory: 1Gi
+      security:
+        capabilities:
+          add:
+            - NET_ADMIN
+            - BPF
+            - NET_RAW
+            - SYS_ADMIN
+            - SYS_PTRACE
+            - SYS_RESOURCE
+        # Required for eBPF Sock Hash, XDP/TC, raw ICMP, perf events
+        privileged: false
+      storage:
+        volumes:
+          - name: bpf-maps
+            path: /sys/fs/bpf
+            type: host
+            # eBPF map mount for sockhash, morph configs
+          - name: cgroup2
+            path: /sys/fs/cgroup
+            type: host
+      # Only the authenticated control gRPC listener exists in this image.
+      # Do not publish proxy/UDP ports until a real supervised core owns and
+      # health-checks them; see the production-readiness audit.
+      ports:
+        - name: grpc
+          internal_port: 7070
+          public: false
+          protocol: TCP
+          health_check:
+            type: tcp
+            port: 7070
+            interval: 10
+            timeout: 5
+            retries: 3
+      environment:
+        AETHER_SUPERVISOR_ADDR: "0.0.0.0:7070"
+        # Required server identity + client trust root; provisioned read-only.
+        AETHER_MTLS_ENABLED: "true"
+        AETHER_SUPERVISOR_TLS_CERT: "/var/run/aether-tls/core-supervisor.crt"
+        AETHER_SUPERVISOR_TLS_KEY: "/var/run/aether-tls/core-supervisor.key"
+        AETHER_SUPERVISOR_CLIENT_CA: "/var/run/aether-tls/interservice-ca.crt"
+        RUST_LOG: "info,aether=debug,enterprise=debug,sockops=debug,zkp=debug"
+        # ── Absolute-Resilient Kernel ──
+        AETHER_ENABLE_SOCKOPS: "true"
+        AETHER_SOCKHASH_MAP: "/sys/fs/bpf/aether_sockhash"
+        AETHER_ENABLE_ZERO_COPY: "true"
+        AETHER_ENABLE_EBPF: "true"
+        AETHER_EBPF_MAPS_PATH: "/sys/fs/bpf"
+        AETHER_ENABLE_CHAFF: "true"
+        AETHER_CHAFF_LAMBDA: "64"
+        AETHER_ENABLE_OOO: "true"
+        AETHER_ENABLE_WINDOW_SCALE: "true"
+        # ── AI Morphing (ONNX) ──
+        AETHER_ENABLE_AI_MORPH: "true"
+        AETHER_AI_MORPH_MODELS: "zoom-rtp,youtube-hls,tls-websocket,aparat-vod,shaparak-banking"
+        AETHER_ONNX_MODEL_PATH: "/models/traffic_morph.onnx"
+        # ── FEC ──
+        AETHER_ENABLE_FEC: "true"
+        AETHER_FEC_K: "10"
+        AETHER_FEC_TARGET_LOSS: "0.4"
+        AETHER_FEC_SHARD_SIZE: "1024"
+        # ── PQC ──
+        AETHER_ENABLE_PQC: "true"
+        AETHER_PQC_KEM: "ml-kem-768"
+        AETHER_PQC_KEX: "x25519+ml-kem-768"
+        # ── OS Polymorphism ──
+        AETHER_ENABLE_OS_POLY: "true"
+        AETHER_OS_PROFILE: "ios-17"
+        AETHER_AVAILABLE_OS: "ios-17,windows-11,android-14,linux-6"
+        # ── ZKP Auth ──
+        AETHER_ENABLE_ZKP: "true"
+        AETHER_ZKP_MERKLE_ROOT: ""
+        # ── Honeypot ──
+        AETHER_ENABLE_HONEYPOT: "true"
+        AETHER_HONEYPOT_ENDPOINTS: "www.digikala.com,www.aparat.com,www.shaparak.ir"
+        # ── TLS Mimicry ──
+        AETHER_ENABLE_TLS_MIMICRY: "true"
+        AETHER_TLS_MIMICRY_MODE: "reality"
+        AETHER_REALITY_DEST: "www.digikala.com:443"
+        AETHER_SHADOWTLS_VERSION: "3"
+        # ── Reverse Relay & Fallback ──
+        AETHER_ENABLE_REVERSE_RELAY: "true"
+        AETHER_CORE_ADDR: "core-supervisor:7070"
+        AETHER_FALLBACK_CHAIN: "quic,tls-in-tls,grpc-mux,doh-tunnel,icmp-encap,ipv6-direct"
+        AETHER_FALLBACK_BUDGET_MS: "200"
+        AETHER_ENABLE_DOMAIN_FRONTING: "true"
+        AETHER_SNI_WHITELIST: "www.digikala.com,www.aparat.com,www.shaparak.ir,arvancloud.ir,www.sharif.edu,cbi.ir,www.dolat.ir,cache.cdn.digikala.com"
+        AETHER_FRONT_DOMAINS: "www.digikala.com,arvancloud.ir,www.aparat.com"
+        # ── Zero-Disconnection ──
+        AETHER_ENABLE_HAPPY_EYEBALLS: "true"
+        AETHER_HAPPY_EYEBALLS_DELAY_MS: "250"
+        AETHER_ENABLE_QUIC_MIGRATION: "true"
+        AETHER_QUIC_PROTOCOLS: "hysteria2,tuic-v5"
+        # ── Resilience ──
+        AETHER_BLACKOUT_DEBOUNCE: "5"
+        AETHER_WARM_TTL_SECS: "5"
+        AETHER_MAX_WARM_STANDBYS: "2"
+        AETHER_STORE_FORWARD: "true"
+      billing:
+        deployment_plan: nf-compute-80
+
+  - name: antiforgery-server
+    type: combined
+    buildimage:
+      dockerfile: deploy/docker/antiforgery-server.Dockerfile
+      build_context: /
+    deployment:
+      instances: 2
+      external:
+        deploy_on_change: true
+      resources:
+        cpu: 500m
+        memory: 512Mi
+      ports:
+        - name: grpc
+          internal_port: 7071
+          public: false
+          protocol: TCP
+          health_check:
+            type: tcp
+            port: 7071
+            interval: 10
+            timeout: 5
+            retries: 3
+      environment:
+        AETHER_ANTIFORGERY_ADDR: "0.0.0.0:7071"
+        AETHER_MTLS_ENABLED: "true"
+        AETHER_ANTIFORGERY_TLS_CERT: "/var/run/aether-tls/antiforgery-server.crt"
+        AETHER_ANTIFORGERY_TLS_KEY: "/var/run/aether-tls/antiforgery-server.key"
+        AETHER_ANTIFORGERY_CLIENT_CA: "/var/run/aether-tls/interservice-ca.crt"
+        RUST_LOG: "info,aether=debug"
+        AETHER_ENABLE_ZKP: "true"
+      billing:
+        deployment_plan: nf-compute-20
+    secret_groups:
+      - aether-secrets
+      - aether-antiforgery-secrets
+
+  - name: control-plane
+    type: combined
+    buildimage:
+      dockerfile: deploy/docker/control-plane.Dockerfile
+      build_context: /
+    deployment:
+      instances: 3
+      external:
+        deploy_on_change: true
+      resources:
+        cpu: 1000m
+        memory: 1Gi
+      ports:
+        - name: http
+          internal_port: 8080
+          public: true
+          protocol: TCP
+          security:
+            credentials: []
+          health_check:
+            type: http
+            path: /healthz
+            port: 8080
+            interval: 10
+            timeout: 5
+            retries: 3
+      secret_groups:
+        - aether-secrets
+      environment:
+        AETHER_HTTP_ADDR: "0.0.0.0:8080"
+        AETHER_SUPERVISOR_ADDR: "core-supervisor:7070"
+        AETHER_ANTIFORGERY_ADDR: "antiforgery-server:7071"
+        # The control plane is a mutually authenticated client of both Rust services.
+        AETHER_MTLS_ENABLED: "true"
+        AETHER_SUPERVISOR_CERT: "/var/run/aether-tls/control-plane-client.crt"
+        AETHER_SUPERVISOR_KEY: "/var/run/aether-tls/control-plane-client.key"
+        AETHER_SUPERVISOR_CA: "/var/run/aether-tls/interservice-ca.crt"
+        AETHER_SUPERVISOR_SERVER_NAME: "core-supervisor"
+        AETHER_ANTIFORGERY_MTLS_ENABLED: "true"
+        AETHER_ANTIFORGERY_CERT: "/var/run/aether-tls/control-plane-client.crt"
+        AETHER_ANTIFORGERY_KEY: "/var/run/aether-tls/control-plane-client.key"
+        AETHER_ANTIFORGERY_CA: "/var/run/aether-tls/interservice-ca.crt"
+        AETHER_ANTIFORGERY_SERVER_NAME: "antiforgery-server"
+        AETHER_NODE_ID: "northflank-primary"
+        # JWT rotation: keep prior kid:secret pairs only through their token TTL.
+        AETHER_JWT_KEY_ID: "active"
+        AETHER_JWT_PREVIOUS_KEYS: ""
+        AETHER_TELEMETRY_FLUSH: "500ms"
+        AETHER_TELEMETRY_SPOOL: "/tmp/aether-telemetry-spool.jsonl"
+        AETHER_DEV: "false"
+        # ── Standard-client subscriptions ──
+        # Set this to a read-only, operator-managed JSON catalog before
+        # enabling delivery. An empty value truthfully keeps subscriptions off.
+        AETHER_NODE_CATALOG_FILE: ""
+        AETHER_NODE_CATALOG_RELOAD_INTERVAL: "30s"
+        AETHER_ENABLE_DYNAMIC_SUBS: "false"
+        AETHER_ENABLE_TELEMETRY_SCORING: "false"
+        # Only operator-controlled ingress CIDRs may attach ISP/region headers.
+        AETHER_TRUSTED_PROXY_CIDRS: ""
+        AETHER_SUB_OPTIMIZER_TTL: "5m"
+        AETHER_GEO_ROUTING: "true"
+        AETHER_SUPPORTED_CORES: "sing-box,xray-core,clash-meta,shadowrocket,nekobox"
+        AETHER_TRANSPORT_PREFERENCE: "xhttp,grpc,ws,quic"
+        # ── Edge Hopper ──
+        AETHER_ENABLE_EDGE_HOPPER: "true"
+        AETHER_EDGE_HOPPER_PROVIDERS: "cloudflare-workers,fastly-compute,aws-lambda,vercel-edge"
+        AETHER_EDGE_HOPPER_BUDGET_MS: "500"
+        AETHER_EDGE_HOPPER_REGIONS: "eu-central,tr-central,us-east,auto"
+        # ── Mesh Orchestrator ──
+        AETHER_ENABLE_MESH: "true"
+        AETHER_MESH_TOPOLOGIES: "webrtc-datachannel,wireguard"
+        AETHER_MESH_MAX_HOPS: "5"
+        # ── Out-of-Band Distribution ──
+        AETHER_ENABLE_OOB: "true"
+        AETHER_OOB_CHANNELS: "dns-txt,doh-txt,ipfs,arweave,telegram-webhook"
+        AETHER_OOB_DNS_DOMAIN: "aether-x.example"
+        AETHER_OOB_TELEGRAM_CHAT: ""
+        # ── Telemetry Engine ──
+        AETHER_ENABLE_TELEMETRY_ENGINE: "true"
+        AETHER_TELEMETRY_METRICS: "rtt,drop_rate,entropy,geo_distance"
+        # ── Session & Failover ──
+        AETHER_SESSION_TTL: "24h"
+        AETHER_DEVICE_LIMIT: "3"
+        AETHER_ENABLE_AUTO_FAILOVER: "true"
+        AETHER_FAILOVER_CUTOFF: "2m"
+        AETHER_ENABLE_QUIC_MIGRATION_API: "true"
+        # ── Telemetry & AI ──
+        AETHER_CLICKHOUSE_MAX_CONNS: "8"
+        AETHER_FEATURIZER_WINDOW: "2m"
+        AETHER_MEASUREMENT_ENABLED: "true"
+        # ── Reverse Relay API ──
+        AETHER_ENABLE_REVERSE_RELAY_API: "true"
+        AETHER_EDGE_REGIONS: "tehran,isfahan,shiraz,mashhad"
+        AETHER_EDGE_ISPS: "MCI,Irancell,Rightel,Shatel,TCI"
+      billing:
+        deployment_plan: nf-compute-40
+
+  - name: dashboard
+    type: combined
+    buildimage:
+      dockerfile: deploy/docker/dashboard.Dockerfile
+      build_context: /
+      build_arguments:
+        NEXT_PUBLIC_API_BASE: "https://control-plane--aether-x.code.run"
+        NEXT_PUBLIC_ENABLE_GEO: "true"
+        NEXT_PUBLIC_ENABLE_EBPF_METRICS: "true"
+        NEXT_PUBLIC_ENABLE_ENTERPRISE: "true"
+        NEXT_PUBLIC_ENABLE_PQC: "true"
+        NEXT_PUBLIC_ENABLE_ZKP: "true"
+        NEXT_PUBLIC_ENABLE_MESH: "true"
+        NEXT_PUBLIC_ENABLE_HOPPER: "true"
+    deployment:
+      instances: 2
+      external:
+        deploy_on_change: true
+      resources:
+        cpu: 500m
+        memory: 512Mi
+      ports:
+        - name: http
+          internal_port: 3000
+          public: true
+          protocol: TCP
+          security:
+            credentials: []
+          health_check:
+            type: http
+            path: /
+            port: 3000
+            interval: 15
+            timeout: 5
+            retries: 3
+      environment:
+        NODE_ENV: production
+        HOSTNAME: "0.0.0.0"
+        PORT: "3000"
+        NEXT_PUBLIC_ENTERPRISE_MODE: "true"
+        NEXT_PUBLIC_ABSOLUTE_RESILIENT: "true"
+        NEXT_PUBLIC_SUPPORTED_TRANSPORTS: "xhttp,grpc,ws,quic,h2,httpupgrade,tcp,tuic,hysteria2"
+        NEXT_PUBLIC_FALLBACK_CHAIN: "quic,tls-in-tls,grpc-mux,doh,icmp,ipv6"
+      billing:
+        deployment_plan: nf-compute-20
+
+deployment_order:
+  - aether-postgres
+  - aether-redis
+  - aether-clickhouse
+  - aether-secrets
+  - aether-antiforgery-secrets
+  - core-supervisor
+  - antiforgery-server
+  - control-plane
+  - dashboard
+
+verification:
+  - "All three addons report healthy: postgres, redis, clickhouse."
+  - "All certificate/key/CA files described in deploy/northflank/README.md are mounted read-only before starting the Rust services."
+  - "Unauthenticated, untrusted-CA, and wrong-SNI gRPC requests are rejected for both internal Rust services."
+  - "A trusted control-plane client can complete its mTLS health call to core-supervisor and anti-forgery RPC."
+  - "The anti-forgery verifying key stays unchanged after a controlled service restart using the same signing seed."
+  - "A canary with CAP_BPF/CAP_NET_ADMIN or bpffs deliberately unavailable starts safely and logs its userspace fallback decision."
+  - "The control-plane /healthz and /readyz endpoints respond only after their declared dependencies are ready."
+  - "Cargo, Go, Docker, Helm, and staging-network gates pass in CI; record measured p50/p95/p99 rather than claiming universal failover timing."
+  - "No proxy UDP/TCP ingress is published until a real, supervised core binds the port and has an authenticated readiness check."
+
+# Notes:
+# - Capability requests are not grants. RuntimePreflight reads the actual
+#   namespace and emits its selected strategy.
+# - This template exposes the currently implemented control-plane listeners,
+#   not simulated proxy ingress. Add a real gateway only after its protocol,
+#   key handling, health check, and authorized network tests are complete.
+# - See docs/PRODUCTION_READINESS_AUDIT_2026-07-26.md for remaining limits and
+#   the additive roadmap.

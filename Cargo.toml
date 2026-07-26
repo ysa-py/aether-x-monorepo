@@ -1,0 +1,12 @@
+# Aether-X Rust workspace. Running `cargo` from the repo root builds and tests
+# every Rust crate (data plane + anti-forgery core) with a single shared
+# target/ directory and one dependency graph.
+[workspace]
+members = ["core-supervisor", "antiforgery", "antiforgery-server", "routing"]
+resolver = "2"
+
+# Shared release profile across the workspace.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

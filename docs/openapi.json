@@ -1,0 +1,569 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Aether-X Control Plane",
+    "version": "0.1.0",
+    "description": "REST + SSE surface of the Aether-X Go control plane.",
+    "license": {
+      "name": "Proprietary"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local dev"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Liveness",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readiness",
+        "responses": {
+          "200": {
+            "description": "Ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cores": {
+      "get": {
+        "tags": [
+          "cores"
+        ],
+        "summary": "List supervised proxy cores",
+        "operationId": "listCores",
+        "responses": {
+          "200": {
+            "description": "Core list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListCoresResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Supervisor unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/route": {
+      "get": {
+        "tags": [
+          "routing"
+        ],
+        "summary": "Resolve Direct/Proxy/Block for a destination",
+        "operationId": "getRoute",
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ip",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Routing decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Routing not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subscriptions/issue": {
+      "post": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Issue a signed subscription token",
+        "operationId": "issueToken",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Issued token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subscriptions/verify": {
+      "post": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Verify a subscription token",
+        "operationId": "verifyToken",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subscriptions/audit-root": {
+      "get": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Current audit-log commitments",
+        "operationId": "getAuditRoot",
+        "responses": {
+          "200": {
+            "description": "Audit root",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditRootResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/telemetry/stream": {
+      "get": {
+        "tags": [
+          "telemetry"
+        ],
+        "summary": "Live telemetry stream (SSE)",
+        "description": "Server-Sent Events stream of telemetry pulses; one `data:` JSON line per event plus a 15s keep-alive.",
+        "operationId": "telemetryStream",
+        "responses": {
+          "200": {
+            "description": "SSE stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamEvent"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stream not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "This OpenAPI document (JSON)",
+        "operationId": "getOpenapiJson",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.yaml": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "This OpenAPI document (YAML)",
+        "operationId": "getOpenapiYaml",
+        "responses": {
+          "200": {
+            "description": "OpenAPI YAML",
+            "content": {
+              "application/yaml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "build": {
+            "type": "string"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "CoreStatus": {
+        "type": "string",
+        "enum": [
+          "CORE_STATUS_UNSPECIFIED",
+          "CORE_STATUS_STARTING",
+          "CORE_STATUS_RUNNING",
+          "CORE_STATUS_DRAINING",
+          "CORE_STATUS_DEGRADED",
+          "CORE_STATUS_STOPPED",
+          "CORE_STATUS_FAILED"
+        ]
+      },
+      "CoreInstance": {
+        "type": "object",
+        "required": [
+          "instance_id",
+          "protocol_id",
+          "status",
+          "restart_count"
+        ],
+        "properties": {
+          "instance_id": {
+            "type": "string"
+          },
+          "protocol_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CoreStatus"
+          },
+          "restart_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "ListCoresResponse": {
+        "type": "object",
+        "required": [
+          "instances"
+        ],
+        "properties": {
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoreInstance"
+            }
+          }
+        }
+      },
+      "RouteResponse": {
+        "type": "object",
+        "required": [
+          "action",
+          "domain",
+          "ip"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "DIRECT",
+              "PROXY",
+              "BLOCK",
+              "UNSPECIFIED"
+            ]
+          },
+          "domain": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          }
+        }
+      },
+      "IssueTokenRequest": {
+        "type": "object",
+        "required": [
+          "subscription_id",
+          "user_id",
+          "bytes_total",
+          "expires_unix"
+        ],
+        "properties": {
+          "subscription_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "bytes_total": {
+            "type": "integer"
+          },
+          "bytes_used": {
+            "type": "integer"
+          },
+          "expires_unix": {
+            "type": "integer"
+          }
+        }
+      },
+      "IssueTokenResponse": {
+        "type": "object",
+        "required": [
+          "token",
+          "audit_seq",
+          "audit_hash",
+          "verifying_key"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "audit_seq": {
+            "type": "integer"
+          },
+          "audit_hash": {
+            "type": "string"
+          },
+          "verifying_key": {
+            "type": "string"
+          }
+        }
+      },
+      "TokenClaims": {
+        "type": "object",
+        "properties": {
+          "subscription_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "bytes_total": {
+            "type": "integer"
+          },
+          "bytes_used": {
+            "type": "integer"
+          },
+          "expires_unix": {
+            "type": "integer"
+          },
+          "issued_unix": {
+            "type": "integer"
+          },
+          "nonce": {
+            "type": "string"
+          }
+        }
+      },
+      "VerifyTokenRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "now_unix": {
+            "type": "integer"
+          }
+        }
+      },
+      "VerifyTokenResponse": {
+        "type": "object",
+        "required": [
+          "signature_valid",
+          "expired",
+          "quota_exhausted",
+          "is_live"
+        ],
+        "properties": {
+          "signature_valid": {
+            "type": "boolean"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "quota_exhausted": {
+            "type": "boolean"
+          },
+          "is_live": {
+            "type": "boolean"
+          },
+          "claims": {
+            "$ref": "#/components/schemas/TokenClaims"
+          }
+        }
+      },
+      "AuditRootResponse": {
+        "type": "object",
+        "required": [
+          "merkle_root",
+          "chain_root",
+          "count"
+        ],
+        "properties": {
+          "merkle_root": {
+            "type": "string"
+          },
+          "chain_root": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        }
+      },
+      "StreamEvent": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "isp": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "latency_ms": {
+            "type": "integer"
+          },
+          "packet_loss": {
+            "type": "boolean"
+          },
+          "rst": {
+            "type": "boolean"
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

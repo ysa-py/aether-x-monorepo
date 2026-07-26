@@ -1,0 +1,33 @@
+Aether-X release "{{ .Release.Name }}" deployed in "{{ .Release.Namespace }}".
+
+Components:
+  - core-supervisor  (Rust data plane)   : {{ include "aetherx.fullname" . }}-core-supervisor:7070
+  - antiforgery      (Rust token service): {{ include "aetherx.fullname" . }}-antiforgery:7071
+  - control-plane    (Go management plane): {{ include "aetherx.fullname" . }}-control-plane:8080
+  - clickhouse       (telemetry store)   : {{ include "aetherx.fullname" . }}-clickhouse:9000
+  - dashboard        (Next.js NOC UI)    : {{ include "aetherx.fullname" . }}-dashboard:80
+
+External dependencies this chart does NOT deploy (point them at a managed
+instance or an operator — the control plane needs both):
+  - PostgreSQL : {{ .Values.postgres.dsn }}
+  - Redis      : {{ .Values.redis.addr }}
+
+{{- if .Values.dashboard.ingress.enabled }}
+
+Access the NOC dashboard at: http{{ if .Values.dashboard.ingress.tls.enabled }}s{{ end }}://{{ .Values.dashboard.ingress.host }}
+{{- end }}
+
+Next steps:
+  1. Override secrets via --set or an external secret manager:
+       controlPlane.jwtSecret  (MUST be >= 32 bytes or the control plane exits)
+       clickhouse.password, postgres.dsn, redis.addr
+  2. The dashboard's API base is baked in at IMAGE BUILD time
+     (NEXT_PUBLIC_API_BASE build arg) and must be reachable from the user's
+     BROWSER. Setting dashboard.apiBase alone does not change the client bundle.
+  3. mTLS to the supervisor is not implemented yet (phase-1 TODO in
+     core-supervisor/src/main.rs). Both mtlsEnabled values default to false on
+     purpose: setting them true authorises a plaintext non-loopback bind while
+     providing no encryption.
+  4. `kubectl rollout status deployment/{{ include "aetherx.fullname" . }}-control-plane`
+  5. Forward the dashboard locally:
+     kubectl port-forward service/{{ include "aetherx.fullname" . }}-dashboard 8080:80

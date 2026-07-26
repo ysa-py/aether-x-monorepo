@@ -1,0 +1,4 @@
+# The Aether-X NOC dashboard is an operator console, not public content.
+# Indexing it only helps an adversary enumerate deployments.
+User-agent: *
+Disallow: /

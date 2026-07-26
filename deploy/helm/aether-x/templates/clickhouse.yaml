@@ -1,0 +1,91 @@
+{{- if .Values.clickhouse.enabled }}
+# Headless service required by the StatefulSet for stable network identity.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aetherx.fullname" . }}-clickhouse
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  clusterIP: None
+  selector:
+    {{- include "aetherx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+  ports:
+    - name: native
+      port: 9000
+      targetPort: 9000
+    - name: http
+      port: 8123
+      targetPort: 8123
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "aetherx.fullname" . }}-clickhouse
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  serviceName: {{ include "aetherx.fullname" . }}-clickhouse
+  replicas: {{ .Values.clickhouse.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aetherx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: clickhouse
+  template:
+    metadata:
+      labels:
+        {{- include "aetherx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: clickhouse
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: clickhouse
+          image: {{ include "aetherx.imageRef" (dict "root" . "image" .Values.clickhouse.image) }}
+          imagePullPolicy: {{ .Values.clickhouse.image.pullPolicy }}
+          env:
+            - name: CLICKHOUSE_USER
+              value: {{ .Values.clickhouse.user | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              value: {{ .Values.clickhouse.password | quote }}
+            - name: CLICKHOUSE_DB
+              value: {{ .Values.clickhouse.database | quote }}
+            - name: MAX_MEMORY_USAGE
+              value: "8000000000"
+          ports:
+            - name: native
+              containerPort: 9000
+            - name: http
+              containerPort: 8123
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+          livenessProbe:
+            tcpSocket:
+              port: native
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: native
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.clickhouse.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.clickhouse.storageClassName }}
+        storageClassName: {{ .Values.clickhouse.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.clickhouse.storage | quote }}
+{{- end }}

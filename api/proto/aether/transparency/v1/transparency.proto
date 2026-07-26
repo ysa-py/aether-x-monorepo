@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package aether.transparency.v1;
+
+// Public transparency log service (Subsystem D — Server).
+//
+// Exposes RFC 6962-style append-only Merkle log operations.
+// What goes in the log: periodic signed commitments to the currently active
+// node/transport catalog state (a hash + timestamp). NEVER user data.
+service TransparencyService {
+  // Get the current signed tree head.
+  rpc GetSignedTreeHead(GetSignedTreeHeadRequest) returns (GetSignedTreeHeadResponse);
+  // Get an inclusion proof for a leaf at a given index.
+  rpc GetInclusionProof(GetInclusionProofRequest) returns (GetInclusionProofResponse);
+  // Get a consistency proof between two tree sizes.
+  rpc GetConsistencyProof(GetConsistencyProofRequest) returns (GetConsistencyProofResponse);
+}
+
+message GetSignedTreeHeadRequest {}
+
+message GetSignedTreeHeadResponse {
+  uint64 tree_size = 1;
+  bytes root = 2;
+  uint64 timestamp = 3;
+  bytes signature = 4;
+}
+
+message GetInclusionProofRequest {
+  uint64 index = 1;
+}
+
+message GetInclusionProofResponse {
+  uint64 index = 1;
+  repeated ProofStep steps = 2;
+}
+
+message ProofStep {
+  bytes sibling = 1;
+  bool is_right_sibling = 2;
+}
+
+message GetConsistencyProofRequest {
+  uint64 old_size = 1;
+}
+
+message GetConsistencyProofResponse {
+  uint64 old_size = 1;
+  uint64 new_size = 2;
+  bytes old_root = 3;
+  bytes new_root = 4;
+  repeated ConsistencyNode nodes = 5;
+}
+
+message ConsistencyNode {
+  uint64 start = 1;
+  uint64 size = 2;
+  bytes hash = 3;
+}

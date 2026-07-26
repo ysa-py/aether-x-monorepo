@@ -1,0 +1,41 @@
+[package]
+name = "aether-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+aether_supervisor = { package = "aether-core-supervisor", path = "../core-supervisor" }
+aether_routing = { package = "aether-routing", path = "../routing" }
+aether_antiforgery = { package = "aether-antiforgery", path = "../antiforgery" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "fuzz_ech_client_hello"
+path = "fuzz_targets/fuzz_ech_client_hello.rs"
+
+[[bin]]
+name = "fuzz_tls_fragmenter"
+path = "fuzz_targets/fuzz_tls_fragmenter.rs"
+
+[[bin]]
+name = "fuzz_route_resolver"
+path = "fuzz_targets/fuzz_route_resolver.rs"
+
+[[bin]]
+name = "fuzz_antiforgery_proofs"
+path = "fuzz_targets/fuzz_antiforgery_proofs.rs"
+
+# Standalone workspace (not a member of the root workspace).
+[workspace]
+
+[[bin]]
+name = "fuzz_ebpf_maps"
+path = "fuzz_targets/fuzz_ebpf_maps.rs"
+
+[[bin]]
+name = "fuzz_tor_ai_failover"
+path = "fuzz_targets/fuzz_tor_ai_failover.rs"

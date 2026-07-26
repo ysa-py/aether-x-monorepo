@@ -1,0 +1,213 @@
+syntax = "proto3";
+
+package aether.supervisor.v1;
+
+import "aether/telemetry/v1/telemetry.proto";
+
+option go_package = "github.com/aether-x/control-plane/api/gen/go/aether/supervisor/v1;supervisorv1";
+
+// CoreSupervisorService is the gRPC contract exposed by the Rust DATA PLANE.
+// The Go CONTROL PLANE is always the client; the supervisor is always the
+// server. Every call is audited on the control-plane side.
+//
+// Transport security: mTLS is mandatory in production (see SECURITY.md). The
+// supervisor must reject any non-mTLS connection on the control port.
+
+service CoreSupervisorService {
+  // Lifecycle
+  rpc StartCore(StartCoreRequest) returns (StartCoreResponse);
+  rpc StopCore(StopCoreRequest) returns (StopCoreResponse);
+  rpc RestartCore(RestartCoreRequest) returns (RestartCoreResponse);
+  rpc ListCores(ListCoresRequest) returns (ListCoresResponse);
+
+  // Switch the active protocol for a logical service without a full restart,
+  // draining existing connections where the core supports it.
+  rpc HotSwapProtocol(HotSwapProtocolRequest) returns (HotSwapProtocolResponse);
+
+  // Liveness/readiness for the orchestrator.
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // Resolve the routing action (DIRECT / PROXY / BLOCK) for a destination,
+  // using the data-plane routing engine. Lets the control plane / MCP query
+  // how a given domain/IP would be routed before connecting.
+  rpc Route(RouteRequest) returns (RouteResponse);
+
+  // Push a fallback / AI policy (e.g. "prefer hysteria2, fragment ClientHello
+  // at 2..5 segments"). Applied idempotently.
+  rpc ApplyPolicy(ApplyPolicyRequest) returns (ApplyPolicyResponse);
+
+  // Server-streaming telemetry. The control plane keeps this stream open and
+  // forwards batches to ClickHouse.
+  rpc StreamTelemetry(StreamTelemetryRequest)
+      returns (stream aether.telemetry.v1.TelemetryBatch);
+}
+
+// ---- Which backend core an instance runs --------------------------------- //
+
+enum CoreKind {
+  CORE_KIND_UNSPECIFIED = 0;
+  CORE_KIND_XRAY = 1;        // VLESS/VMess/Trojan/Reality/XTLS-Vision/XHTTP/gRPC/WS
+  CORE_KIND_SING_BOX = 2;    // Hysteria2/TUIC v5/ShadowTLS v3/AnyTLS/SS-2022/WireGuard
+  CORE_KIND_AMNEZIA_WG = 3;  // obfuscated WireGuard
+  CORE_KIND_NAIVE = 4;       // HTTP/2 CDN-mimicking
+  CORE_KIND_PERSIS = 5;      // proprietary differentiation core (Rust)
+}
+
+enum CoreStatus {
+  CORE_STATUS_UNSPECIFIED = 0;
+  CORE_STATUS_STARTING = 1;
+  CORE_STATUS_RUNNING = 2;
+  CORE_STATUS_DRAINING = 3;   // hot-swap in progress, refusing new conns
+  CORE_STATUS_DEGRADED = 4;   // up but failing probes above threshold
+  CORE_STATUS_STOPPED = 5;
+  CORE_STATUS_FAILED = 6;
+}
+
+// ---- Resource limits enforced via cgroups (Linux) ------------------------ //
+
+message ResourceLimits {
+  uint32 cpu_weight = 1;     // 1..10000 (cgroup v2 cpu.weight)
+  uint64 memory_limit_bytes = 2;
+  uint64 max_fds = 3;
+  // Cap concurrent inbound connections to protect a shared egress.
+  uint32 max_inbound_conns = 4;
+}
+
+// ---- Protocol spec (oneof so new transports are additive) --------------- //
+
+message ProtocolSpec {
+  string protocol_id = 1;            // e.g. "reality-vision"
+  bytes  opaque_config = 2;          // core-specific config blob (JSON/CUE), opaque to supervisor
+  bool   hot_swap_capable = 3;       // can this core drain+swap in place?
+  string listen_addr = 4;            // e.g. "0.0.0.0:443"
+}
+
+// ---- Lifecycle messages -------------------------------------------------- //
+
+message CoreConfig {
+  string instance_id = 1;            // caller-assigned, idempotent
+  CoreKind kind = 2;
+  ProtocolSpec protocol = 3;
+  ResourceLimits limits = 4;
+  // Optional restart policy for the supervisor's supervisor-of-processes loop.
+  uint32 max_restarts = 5;           // within restart_window_secs
+  uint32 restart_window_secs = 6;
+}
+
+message StartCoreRequest  { CoreConfig config = 1; }
+message StartCoreResponse { string instance_id = 1; CoreStatus status = 2; }
+
+message StopCoreRequest {
+  string instance_id = 1;
+  // If true, refuse new conns, wait up to drain_timeout_ms for in-flight, then kill.
+  bool   drain = 2;
+  uint32 drain_timeout_ms = 3;
+}
+message StopCoreResponse { CoreStatus status = 1; }
+
+message RestartCoreRequest { string instance_id = 1; }
+message RestartCoreResponse { CoreStatus status = 1; }
+
+message ListCoresRequest {}
+message CoreInstance {
+  string instance_id = 1;
+  CoreKind kind = 2;
+  string protocol_id = 3;
+  CoreStatus status = 4;
+  int64 started_at_unix_millis = 5;
+  uint32 restart_count = 6;
+  CoreMetrics metrics = 7;
+}
+message ListCoresResponse { repeated CoreInstance instances = 1; }
+
+message HotSwapProtocolRequest {
+  string instance_id = 1;
+  ProtocolSpec new_protocol = 2;
+  uint32 drain_timeout_ms = 3;       // 0 = immediate hard switch
+}
+message HotSwapProtocolResponse {
+  string instance_id = 1;
+  CoreStatus status = 2;
+  bool migrated_sessions = 3;        // false if core cannot drain
+}
+
+message HealthCheckRequest {}
+message HealthCheckResponse {
+  enum ServingStatus {
+    SERVING_STATUS_UNKNOWN = 0;
+    SERVING_STATUS_SERVING = 1;
+    SERVING_STATUS_NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+  string version = 2;                // build semver of the supervisor
+}
+
+// ---- Routing (data-plane Direct/Proxy/Block decision) ------------------- //
+
+enum RouteAction {
+  ROUTE_ACTION_UNSPECIFIED = 0;
+  ROUTE_ACTION_DIRECT = 1;   // domestic / trusted: bypass the tunnel
+  ROUTE_ACTION_PROXY = 2;    // foreign / blocked: through the tunnel
+  ROUTE_ACTION_BLOCK = 3;    // ads / malware: drop
+}
+
+message RouteRequest {
+  // Destination domain; empty means "no domain" (raw-IP connection).
+  string domain = 1;
+  // Destination IP as a string (e.g. "78.38.5.5"); empty means unknown.
+  string ip = 2;
+}
+
+message RouteResponse {
+  RouteAction action = 1;
+  string domain = 2;   // echo of the queried domain
+  string ip = 3;       // echo of the queried ip
+}
+
+// ---- Policy push (deterministic heuristic + AI both use this path) ------ //
+
+message FragmentationPolicy {
+  bool enabled = 1;
+  // Split the TLS ClientHello into N TCP segments at these byte offsets.
+  // Empty -> adaptive (supervisor decides from live probe feedback).
+  repeated uint32 split_offsets = 2;
+  uint32 max_segments = 3;           // cap for adaptive mode
+}
+
+message Policy {
+  string protocol_id = 1;            // target instance protocol
+  FragmentationPolicy fragmentation = 2;
+  // Preferred fallback order learned by the AI / heuristic engine.
+  repeated string fallback_chain = 3;
+  // Monotonic revision; supervisor rejects stale revisions.
+  uint64 revision = 4;
+}
+
+message ApplyPolicyRequest {
+  string instance_id = 1;
+  Policy policy = 2;
+}
+message ApplyPolicyResponse {
+  bool applied = 1;
+  uint64 effective_revision = 2;
+}
+
+message StreamTelemetryRequest {
+  string node_id = 1;
+  // Optional filter; empty == all events.
+  repeated .aether.telemetry.v1.EventKind kinds = 2;
+}
+
+// ---- Metrics snapshot ---------------------------------------------------- //
+
+message CoreMetrics {
+  uint64 active_connections = 1;
+  uint64 total_connections = 2;
+  double rx_bytes_per_sec = 3;
+  double tx_bytes_per_sec = 4;
+  double p50_rtt_ms = 5;
+  double block_rate = 6;             // failed probes / total probes (windowed)
+  double cpu_fraction = 7;
+  uint64 resident_bytes = 8;
+  int64 collected_at_unix_millis = 9;
+}

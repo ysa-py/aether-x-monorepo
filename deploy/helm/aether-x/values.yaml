@@ -1,0 +1,158 @@
+# Aether-X production Helm values. Override per-environment with -f or --set.
+# Secrets (jwtSecret, mtls material, ClickHouse password) MUST be overridden in
+# real environments — ideally via an external secret manager, not this file.
+
+global:
+  imageRegistry: ""                 # e.g. "ghcr.io/aether-x"; empty = Docker Hub / local
+  imagePullSecrets: []
+  nameOverride: ""
+  fullnameOverride: ""
+
+# --- Rust data plane ---------------------------------------------------------
+coreSupervisor:
+  enabled: true
+  image:
+    repository: aetherx/core-supervisor
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Raw-socket fragmentation needs NET_ADMIN; hostNetwork is optional.
+  hostNetwork: false
+  netAdmin: true
+  # Bind on all interfaces so the control plane can reach it in-cluster.
+  addr: "0.0.0.0:7070"
+  # See the note on controlPlane.mtlsEnabled: this gate authorises a plaintext
+  # non-loopback bind, it does not enable TLS. Leave false until phase 1 lands.
+  mtlsEnabled: false
+  resources:
+    requests: { cpu: "250m", memory: "128Mi" }
+    limits: { cpu: "1000m", memory: "512Mi" }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- Go management plane -----------------------------------------------------
+controlPlane:
+  enabled: true
+  image:
+    repository: aetherx/control-plane
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  httpAddr: "0.0.0.0:8080"
+  # In-cluster addresses of the Rust services.
+  supervisorAddr: "aether-x-core-supervisor:7070"
+  # Points at the antiforgery Deployment's own Service. This previously read
+  # "aether-x-control-plane:7071" — a port the Go binary never listens on, and
+  # the antiforgery Deployment did not exist at all, so /v1/subscriptions
+  # failed against a service that was never deployed.
+  antiforgeryAddr: "aether-x-antiforgery:7071"
+  nodeId: "helm-1"
+  # Secret keys (override in prod!). Rendered into the chart Secret as
+  # AETHER_JWT_SECRET; config.go REFUSES TO START if it is under 32 bytes.
+  jwtSecret: "change-me-to-a-32-byte-secret-xxxx"
+  # SECURITY: mTLS to the supervisor is NOT implemented yet —
+  # core-supervisor/src/main.rs only logs "TLS wiring is pending in phase 1".
+  # Setting this true authorises a non-loopback PLAINTEXT bind while providing
+  # no encryption, which is strictly worse than false. Keep it false until the
+  # TLS material is actually wired; the link stays inside the cluster network.
+  mtlsEnabled: false
+  resources:
+    requests: { cpu: "200m", memory: "192Mi" }
+    limits: { cpu: "1000m", memory: "512Mi" }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- Anti-forgery gRPC service ----------------------------------------------
+# Required by /v1/subscriptions: holds the Ed25519 signing key so the Go
+# control plane never reimplements the crypto.
+antiforgeryServer:
+  enabled: true
+  image:
+    repository: aetherx/antiforgery-server
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  addr: "0.0.0.0:7071"
+  rustLog: "info,aether=debug"
+  resources:
+    requests: { cpu: "100m", memory: "64Mi" }
+    limits: { cpu: "500m", memory: "256Mi" }
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- Postgres (subscriptions / users) ----------------------------------------
+# NOT optional: control-plane/internal/store/postgres.go backs subscriptions and
+# users. The chart does not deploy a database — point this at a managed instance
+# or an in-cluster operator. Left unset, the control plane silently falls back
+# to its localhost default and every subscription operation fails.
+postgres:
+  dsn: "postgres://aether:aether@aether-postgres:5432/aether?sslmode=require"
+
+# --- Redis (session / cache) -------------------------------------------------
+# Also not optional: control-plane/internal/store/redis.go backs sessions and
+# caching. NOTE the format — config.go reads a HOST:PORT pair, not a redis:// URL.
+redis:
+  addr: "aether-redis:6379"
+
+# --- ClickHouse telemetry persistence ---------------------------------------
+clickhouse:
+  enabled: true
+  image:
+    repository: clickhouse/clickhouse-server
+    tag: "24.3"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  user: aether
+  password: aether            # override in prod
+  database: aether
+  storage: "10Gi"
+  storageClassName: ""        # empty = cluster default
+  resources:
+    requests: { cpu: "1000m", memory: "2Gi" }
+    limits: { cpu: "2000m", memory: "2Gi" }
+
+# --- Next.js NOC dashboard ---------------------------------------------------
+dashboard:
+  enabled: true
+  image:
+    repository: aetherx/dashboard
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  # The dashboard talks to the control plane REST/SSE.
+  #
+  # IMPORTANT: NEXT_PUBLIC_* is inlined into the CLIENT bundle at BUILD time,
+  # not read at runtime, so setting it here only affects the server process.
+  # It must also be a URL the USER'S BROWSER can resolve — an in-cluster name
+  # like "aether-x-control-plane:8080" is unreachable from a laptop. Set this
+  # to the control plane's public ingress host and bake the same value in at
+  # image build time via the Dockerfile's NEXT_PUBLIC_API_BASE build arg.
+  apiBase: "https://api.aether-x.local"
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits: { cpu: "500m", memory: "256Mi" }
+  ingress:
+    enabled: true
+    className: nginx
+    host: noc.aether-x.local
+    annotations:
+      # SSE: disable buffering + long read timeout for the telemetry stream.
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    tls:
+      enabled: false
+      secretName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+serviceAccount:
+  create: true
+  annotations: {}

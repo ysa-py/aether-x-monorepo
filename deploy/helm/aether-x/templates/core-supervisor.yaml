@@ -1,0 +1,112 @@
+{{- if .Values.coreSupervisor.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aetherx.fullname" . }}-core-supervisor
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: core-supervisor
+data:
+  # Fallback FSM cascade (mirrors policy.rs DEFAULT_CASCADE). Mutate here to
+  # tune the data-plane fallback order without a rebuild.
+  fallback_cascade.conf: |
+    reality-vision
+    hysteria2
+    tuic-v5
+    shadowtls-v3-ss2022
+    amneziawg
+    persis-cover-front
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aetherx.fullname" . }}-core-supervisor
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: core-supervisor
+spec:
+  replicas: {{ .Values.coreSupervisor.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aetherx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: core-supervisor
+  template:
+    metadata:
+      labels:
+        {{- include "aetherx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: core-supervisor
+    spec:
+      hostNetwork: {{ .Values.coreSupervisor.hostNetwork }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: fallback-config
+          configMap:
+            name: {{ include "aetherx.fullname" . }}-core-supervisor
+      containers:
+        - name: core-supervisor
+          image: {{ include "aetherx.imageRef" (dict "root" . "image" .Values.coreSupervisor.image) }}
+          imagePullPolicy: {{ .Values.coreSupervisor.image.pullPolicy }}
+          args: ["aether-supervisor"]
+          env:
+            - name: AETHER_SUPERVISOR_ADDR
+              value: {{ .Values.coreSupervisor.addr | quote }}
+            - name: AETHER_MTLS_ENABLED
+              value: {{ .Values.coreSupervisor.mtlsEnabled | quote }}
+          ports:
+            - name: grpc
+              containerPort: 7070
+          volumeMounts:
+            - name: fallback-config
+              mountPath: /etc/aether/fallback_cascade.conf
+              subPath: fallback_cascade.conf
+              readOnly: true
+          {{- if .Values.coreSupervisor.netAdmin }}
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          {{- end }}
+          livenessProbe:
+            tcpSocket:
+              port: 7070
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: 7070
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.coreSupervisor.resources | nindent 12 }}
+      {{- with .Values.coreSupervisor.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coreSupervisor.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coreSupervisor.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aetherx.fullname" . }}-core-supervisor
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: core-supervisor
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "aetherx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: core-supervisor
+  ports:
+    - name: grpc
+      port: 7070
+      targetPort: grpc
+{{- end }}

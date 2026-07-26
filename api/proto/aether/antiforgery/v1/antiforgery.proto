@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package aether.antiforgery.v1;
+
+option go_package = "github.com/aether-x/control-plane/api/gen/go/aether/antiforgery/v1;antiforgeryv1";
+
+// AntiForgeryService exposes the Rust anti-forgery core (Ed25519 subscription
+// tokens + tamper-evident audit log) to the Go control plane over gRPC. This is
+// the integration bridge — the control plane never reimplements the crypto.
+
+service AntiForgeryService {
+  // Issue a signed subscription token and record the mutation in the audit log.
+  rpc IssueToken(IssueTokenRequest) returns (IssueTokenResponse);
+
+  // Verify a token's signature and check expiry/quota against `now_unix`.
+  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+
+  // Current audit-log commitments (Merkle forest root + hash-chain root).
+  rpc AuditRoot(AuditRootRequest) returns (AuditRootResponse);
+}
+
+message IssueTokenRequest {
+  string subscription_id = 1;
+  string user_id = 2;
+  int64 bytes_total = 3;
+  int64 bytes_used = 4;
+  int64 expires_unix = 5;
+}
+
+message IssueTokenResponse {
+  string token = 1;
+  // The audit-log sequence number assigned to this issuance.
+  int64 audit_seq = 2;
+  // SHA-256 record hash of the audit entry (hash-chained).
+  bytes audit_hash = 3;
+  // The server's Ed25519 verifying key (33+ bytes), so clients can pin it.
+  bytes verifying_key = 4;
+}
+
+message VerifyTokenRequest {
+  string token = 1;
+  // Server-verified "now" (unix seconds) for expiry/quota checks.
+  int64 now_unix = 2;
+}
+
+message Claims {
+  string subscription_id = 1;
+  string user_id = 2;
+  int64 bytes_total = 3;
+  int64 bytes_used = 4;
+  int64 expires_unix = 5;
+  int64 issued_unix = 6;
+  string nonce = 7;
+}
+
+message VerifyTokenResponse {
+  // True iff the Ed25519 signature verified against the server key.
+  bool signature_valid = 1;
+  // True iff now_unix >= expires_unix.
+  bool expired = 2;
+  // True iff bytes_used >= bytes_total.
+  bool quota_exhausted = 3;
+  // Convenience: signature_valid && !expired && !quota_exhausted.
+  bool is_live = 4;
+  Claims claims = 5;
+}
+
+message AuditRootRequest {}
+
+message AuditRootResponse {
+  // RFC 6962 forest root over all audit payloads (32 bytes).
+  bytes merkle_root = 1;
+  // Last record hash of the hash-chain (32 bytes).
+  bytes chain_root = 2;
+  // Number of audit records.
+  int64 count = 3;
+}

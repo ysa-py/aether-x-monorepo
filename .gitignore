@@ -1,0 +1,29 @@
+# Rust
+target/
+**/*.rs.bk
+# Cargo.lock IS committed (this crate ships binaries, not a library).
+
+# Go
+control-plane/coverage.out
+control-plane/*.test
+control-plane/vendor/
+
+# Generated proto stubs are committed for reproducible builds; uncomment to
+# ignore if you prefer to generate in CI only:
+# api/gen/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# proptest shrunk-case pins (dev-local; tests are self-validating)
+*.proptest-regressions
+
+# Local secrets — NEVER commit
+*.pem
+*.key
+*.crt
+.env
+.env.*

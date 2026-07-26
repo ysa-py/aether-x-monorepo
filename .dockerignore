@@ -1,0 +1,60 @@
+# Build-context exclusions for every image in deploy/docker/.
+#
+# All four Dockerfiles use the MONOREPO ROOT as their context, so without this
+# file the daemon would upload Rust target/ trees and node_modules/ on every
+# build — slow, and a way for local artefacts or secrets to reach an image
+# layer. Anything the builds genuinely need is listed as an exception below.
+
+# ── Build outputs ────────────────────────────────────────────────────────────
+target/
+**/target/
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/build/
+**/coverage/
+control-plane/vendor/
+control-plane/coverage.out
+control-plane/*.test
+**/__pycache__/
+**/*.pyc
+
+# ── Secrets — never let these into a layer ───────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+.netrc
+.git-credentials
+
+# ── VCS / CI / editor noise ──────────────────────────────────────────────────
+.git/
+.github/
+.gitignore
+.editorconfig
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# ── Docs and non-build assets ────────────────────────────────────────────────
+*.md
+docs/
+deploy/monitoring/
+deploy/helm/
+deploy/compose/
+infra/
+tests/load/
+fuzz/
+ai-training/
+**/*.proptest-regressions
+
+# ── Exceptions: required by the builds ───────────────────────────────────────
+# The dashboard image needs the committed lockfile for `npm ci`.
+!aether-x-dashboard/package-lock.json
+# The Rust images need the workspace lockfile for `cargo build --locked`.
+!Cargo.lock

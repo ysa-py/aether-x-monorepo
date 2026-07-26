@@ -1,0 +1,91 @@
+{{- if .Values.antiforgeryServer.enabled }}
+# Anti-forgery gRPC service.
+#
+# This deployment was missing from the chart while values.yaml still pointed
+# controlPlane.antiforgeryAddr at "aether-x-control-plane:7071" — a port the Go
+# control plane does not listen on. Every /v1/subscriptions call therefore
+# failed against a service that was never deployed. The service is what holds
+# the Ed25519 signing key: the control plane delegates all token operations to
+# it rather than reimplementing the crypto in Go (see README).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aetherx.fullname" . }}-antiforgery
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: antiforgery
+spec:
+  # Deliberately single-replica: the scaffold generates an ephemeral signing key
+  # at startup, so two replicas would sign with two different keys and tokens
+  # would verify only against whichever pod happened to issue them. Give it a
+  # sealed, shared key before raising this.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aetherx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: antiforgery
+  template:
+    metadata:
+      labels:
+        {{- include "aetherx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: antiforgery
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: antiforgery
+          image: {{ include "aetherx.imageRef" (dict "root" . "image" .Values.antiforgeryServer.image) }}
+          imagePullPolicy: {{ .Values.antiforgeryServer.image.pullPolicy }}
+          env:
+            - name: AETHER_ANTIFORGERY_ADDR
+              value: {{ .Values.antiforgeryServer.addr | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.antiforgeryServer.rustLog | quote }}
+          ports:
+            - name: grpc
+              containerPort: 7071
+          # gRPC without the health protocol: a TCP probe is the honest check.
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.antiforgeryServer.resources | nindent 12 }}
+      {{- with .Values.antiforgeryServer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.antiforgeryServer.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.antiforgeryServer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aetherx.fullname" . }}-antiforgery
+  labels:
+    {{- include "aetherx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: antiforgery
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 7071
+      targetPort: grpc
+  selector:
+    {{- include "aetherx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: antiforgery
+{{- end }}

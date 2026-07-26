@@ -1,0 +1,10 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - WIRE_JSON
+  # We never allow wire-incompatible changes on a released v1.

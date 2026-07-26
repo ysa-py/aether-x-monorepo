@@ -1,0 +1,16 @@
+# Aether-X Production Terraform Variables
+# Copy to terraform.tfvars and fill in your values.
+# NEVER commit real secrets — use environment variables: TF_VAR_hcloud_token=...
+
+hcloud_token  = "your-hcloud-api-token-here"
+name_prefix   = "aether-x"
+location      = "nbg1"              # nbg1=Nuremberg, hel1=Helsinki, ash=Ashburn
+ssh_keys      = ["aether-x-ssh"]
+edge_count    = 3
+
+supervisor_image = "aetherx/core-supervisor:0.1.0"
+control_image    = "aetherx/control-plane:0.1.0"
+
+# Secrets — set via TF_VAR_jwt_secret and TF_VAR_clickhouse_dsn
+jwt_secret     = "generate-a-32-byte-secret"
+clickhouse_dsn = "clickhouse://aether:securepassword@127.0.0.1:9000/aether"
