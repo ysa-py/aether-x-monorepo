@@ -37,7 +37,7 @@ type Server struct {
 	// AllowUnauthenticatedDevelopment is an explicit local-only escape hatch.
 	// It must never be enabled in a public deployment.
 	AllowUnauthenticatedDevelopment bool
-	Build           string
+	Build                           string
 	// MCP is the embedded Model Context Protocol handler (tools/resources/prompts).
 	// When nil, GET /mcp returns a not-implemented placeholder so the panel is
 	// always runnable.

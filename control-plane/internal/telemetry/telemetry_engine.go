@@ -13,24 +13,24 @@ import (
 
 // CandidateWeight is auto-tuned weight for a routing candidate
 type CandidateWeight struct {
-	NodeID       string
-	Transport    string
-	BaseWeight   float64
-	TunedWeight  float64
-	RTTMs        uint16
-	DropRate     float64 // 0-1
-	EntropyScore float64 // 0-8
+	NodeID        string
+	Transport     string
+	BaseWeight    float64
+	TunedWeight   float64
+	RTTMs         uint16
+	DropRate      float64 // 0-1
+	EntropyScore  float64 // 0-8
 	GeoDistanceKm float64
-	LastTuned    time.Time
+	LastTuned     time.Time
 }
 
 // TelemetryEngine queries ClickHouse real-time and tunes weights
 type TelemetryEngine struct {
-	mu       sync.RWMutex
-	weights  map[string]*CandidateWeight // key nodeID+transport
-	queries  int64
-	tunings  int64
-	reader   TelemetryReader
+	mu      sync.RWMutex
+	weights map[string]*CandidateWeight // key nodeID+transport
+	queries int64
+	tunings int64
+	reader  TelemetryReader
 }
 
 type TelemetryReader interface {
@@ -38,11 +38,11 @@ type TelemetryReader interface {
 }
 
 type MetricsSnapshot struct {
-	RTTMs        uint16
-	DropRate     float64
-	EntropyScore float64
+	RTTMs         uint16
+	DropRate      float64
+	EntropyScore  float64
 	GeoDistanceKm float64
-	Timestamp    time.Time
+	Timestamp     time.Time
 }
 
 func NewTelemetryEngine(reader TelemetryReader) *TelemetryEngine {
@@ -177,11 +177,11 @@ func (m *MockTelemetryReader) QueryMetrics(ctx context.Context, nodeID string) (
 	}
 	// default
 	return MetricsSnapshot{
-		RTTMs:        100,
-		DropRate:     0.05,
-		EntropyScore: 7.0,
+		RTTMs:         100,
+		DropRate:      0.05,
+		EntropyScore:  7.0,
 		GeoDistanceKm: 1000,
-		Timestamp:    time.Now(),
+		Timestamp:     time.Now(),
 	}, nil
 }
 
@@ -201,11 +201,11 @@ func (c *ClickHouseTelemetryReader) QueryMetrics(ctx context.Context, nodeID str
 	// FROM telemetry_events WHERE node_id = ? AND event_time > now() - 5m
 	// For mock return realistic data
 	return MetricsSnapshot{
-		RTTMs:        120,
-		DropRate:     0.02,
-		EntropyScore: 7.2,
+		RTTMs:         120,
+		DropRate:      0.02,
+		EntropyScore:  7.2,
 		GeoDistanceKm: 2500,
-		Timestamp:    time.Now(),
+		Timestamp:     time.Now(),
 	}, nil
 }
 

@@ -188,16 +188,16 @@ func TestBuildConfigNativeQUICProtocols(t *testing.T) {
 		singboxFields []string
 	}{
 		{
-			name:        "hysteria2",
-			body:        `{"protocol":"hysteria2","transport":"quic","address":"node.example.com","port":443,"password":"hy2-password","sni":"node.example.com","up_mbps":100,"down_mbps":200}`,
-			sharePrefix: "hysteria2://",
+			name:          "hysteria2",
+			body:          `{"protocol":"hysteria2","transport":"quic","address":"node.example.com","port":443,"password":"hy2-password","sni":"node.example.com","up_mbps":100,"down_mbps":200}`,
+			sharePrefix:   "hysteria2://",
 			clashRequired: []string{`type: "hysteria2"`, `up: 100`, `down: 200`},
 			singboxFields: []string{`"type": "hysteria2"`, `"up_mbps": 100`, `"down_mbps": 200`},
 		},
 		{
-			name:        "tuic",
-			body:        `{"protocol":"tuic","transport":"quic","address":"node.example.com","port":443,"uuid":"tuic-uuid","password":"tuic-password","sni":"node.example.com","congestion_control":"bbr","udp_relay_mode":"native"}`,
-			sharePrefix: "tuic://",
+			name:          "tuic",
+			body:          `{"protocol":"tuic","transport":"quic","address":"node.example.com","port":443,"uuid":"tuic-uuid","password":"tuic-password","sni":"node.example.com","congestion_control":"bbr","udp_relay_mode":"native"}`,
+			sharePrefix:   "tuic://",
 			clashRequired: []string{`type: "tuic"`, `congestion-controller: "bbr"`, `udp-relay-mode: "native"`},
 			singboxFields: []string{`"type": "tuic"`, `"congestion_control": "bbr"`, `"udp_relay_mode": "native"`},
 		},

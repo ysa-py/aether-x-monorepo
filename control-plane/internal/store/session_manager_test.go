@@ -46,8 +46,8 @@ func TestSessionManagerRecordsNativeQUICMigration(t *testing.T) {
 	ctx := context.Background()
 
 	sess := &Session{
-		ID:     "sess-migrate",
-		UserID: "user-001",
+		ID:       "sess-migrate",
+		UserID:   "user-001",
 		NodeID:   "node-fra-01",
 		Protocol: "hysteria2",
 		ConnID:   "conn-preserving-cid",
@@ -171,8 +171,8 @@ func TestSessionManagerSerializesConcurrentMigrations(t *testing.T) {
 	mgr := NewSessionManager("localhost:6379", mem)
 	ctx := context.Background()
 	if err := mgr.CreateSession(ctx, &Session{
-		ID:     "sess-concurrent",
-		UserID: "u1",
+		ID:       "sess-concurrent",
+		UserID:   "u1",
 		NodeID:   "node-0",
 		Protocol: "tuic",
 		ConnID:   "stable-quic-cid",
@@ -222,12 +222,12 @@ func TestSessionManagerRejectsTransparentMigrationForStreamSession(t *testing.T)
 	mgr := NewSessionManager("localhost:6379", mem)
 	ctx := context.Background()
 	if err := mgr.CreateSession(ctx, &Session{
-		ID:       "sess-tcp",
-		UserID:   "u1",
-		NodeID:   "node-a",
-		Protocol: "vless",
+		ID:        "sess-tcp",
+		UserID:    "u1",
+		NodeID:    "node-a",
+		Protocol:  "vless",
 		Transport: "tcp",
-		ConnID:   "not-a-quic-cid",
+		ConnID:    "not-a-quic-cid",
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}

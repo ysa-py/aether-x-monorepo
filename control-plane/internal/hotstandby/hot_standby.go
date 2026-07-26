@@ -9,22 +9,22 @@ import (
 )
 
 type StandbyChannel struct {
-	ID           string
-	Region       string
-	Transport    string
-	Handshaked   bool
-	LastUsed     time.Time
-	Bytes        int64
-	RTTMs        uint16
-	Active       bool
+	ID         string
+	Region     string
+	Transport  string
+	Handshaked bool
+	LastUsed   time.Time
+	Bytes      int64
+	RTTMs      uint16
+	Active     bool
 }
 
 type HotStandbyPool struct {
-	mu        sync.RWMutex
-	channels  map[string]*StandbyChannel
-	minSize   int
-	maxSize   int
-	created   int64
+	mu         sync.RWMutex
+	channels   map[string]*StandbyChannel
+	minSize    int
+	maxSize    int
+	created    int64
 	migrations int64
 }
 

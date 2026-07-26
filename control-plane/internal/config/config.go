@@ -13,55 +13,55 @@ import (
 
 // Config is the resolved control-plane configuration.
 type Config struct {
-	HTTPAddr               string        // public REST/MCP listener
-	SupervisorAddr         string        // Rust data-plane gRPC address
-	PostgresDSN            string        // source of truth DB
-	ClickHouseDSN          string        // telemetry / feature store
-	RedisAddr              string        // sessions + rate limiting
-	JWTSecret              []byte        // active signing key for access tokens
-	JWTKeyID               string        // active JWT key ID used in kid header
-	JWTPreviousKeys        map[string][]byte // verification-only rotating JWT keys
-	MTLSEnabled            bool          // require mTLS to the supervisor
-	SupervisorCert         string        // client cert PEM path (mTLS)
-	SupervisorKey          string        // client key PEM path (mTLS)
-	SupervisorCA           string        // supervisor server CA PEM path
-	SupervisorServerName   string        // optional TLS SNI / certificate name
-	AntiforgeryAddr        string        // Rust anti-forgery gRPC address
-	AntiforgeryMTLSEnabled bool          // require mTLS to the anti-forgery service
-	AntiforgeryCert        string        // client cert PEM path (mTLS)
-	AntiforgeryKey         string        // client key PEM path (mTLS)
-	AntiforgeryCA          string        // anti-forgery server CA PEM path
-	AntiforgeryServerName  string        // optional TLS SNI / certificate name
-	NodeCatalogFile           string        // validated standard-client node catalog JSON path
-	NodeCatalogReloadInterval time.Duration // safe poll interval for catalog hot reload
-	SubscriptionDelivery      bool          // publish verified standard-client subscriptions
-	TelemetryScoring          bool          // reorder verified nodes using real ClickHouse aggregates
-	TrustedProxyCIDRs         []string      // ingress CIDRs allowed to assert network headers
-	Development               bool          // explicit local-only auth bypass
-	TelemetryFlush            time.Duration // how often the ingester commits to ClickHouse
+	HTTPAddr                  string            // public REST/MCP listener
+	SupervisorAddr            string            // Rust data-plane gRPC address
+	PostgresDSN               string            // source of truth DB
+	ClickHouseDSN             string            // telemetry / feature store
+	RedisAddr                 string            // sessions + rate limiting
+	JWTSecret                 []byte            // active signing key for access tokens
+	JWTKeyID                  string            // active JWT key ID used in kid header
+	JWTPreviousKeys           map[string][]byte // verification-only rotating JWT keys
+	MTLSEnabled               bool              // require mTLS to the supervisor
+	SupervisorCert            string            // client cert PEM path (mTLS)
+	SupervisorKey             string            // client key PEM path (mTLS)
+	SupervisorCA              string            // supervisor server CA PEM path
+	SupervisorServerName      string            // optional TLS SNI / certificate name
+	AntiforgeryAddr           string            // Rust anti-forgery gRPC address
+	AntiforgeryMTLSEnabled    bool              // require mTLS to the anti-forgery service
+	AntiforgeryCert           string            // client cert PEM path (mTLS)
+	AntiforgeryKey            string            // client key PEM path (mTLS)
+	AntiforgeryCA             string            // anti-forgery server CA PEM path
+	AntiforgeryServerName     string            // optional TLS SNI / certificate name
+	NodeCatalogFile           string            // validated standard-client node catalog JSON path
+	NodeCatalogReloadInterval time.Duration     // safe poll interval for catalog hot reload
+	SubscriptionDelivery      bool              // publish verified standard-client subscriptions
+	TelemetryScoring          bool              // reorder verified nodes using real ClickHouse aggregates
+	TrustedProxyCIDRs         []string          // ingress CIDRs allowed to assert network headers
+	Development               bool              // explicit local-only auth bypass
+	TelemetryFlush            time.Duration     // how often the ingester commits to ClickHouse
 }
 
 // FromEnv reads configuration from the process environment.
 func FromEnv() (Config, error) {
 	c := Config{
-		HTTPAddr:               httpAddrFromEnv(),
-		JWTKeyID:                getenv("AETHER_JWT_KEY_ID", "active"),
-		SupervisorAddr:         getenv("AETHER_SUPERVISOR_ADDR", "127.0.0.1:7070"),
-		PostgresDSN:            getenv("AETHER_POSTGRES_DSN", "postgres://aether:aether@localhost:5432/aether?sslmode=disable"),
-		ClickHouseDSN:          getenv("AETHER_CLICKHOUSE_DSN", "clickhouse://aether:aether@localhost:9000/aether"),
-		RedisAddr:              getenv("AETHER_REDIS_ADDR", "localhost:6379"),
-		TelemetryFlush:         getenvDuration("AETHER_TELEMETRY_FLUSH", 500*time.Millisecond),
-		MTLSEnabled:            getenvBool("AETHER_MTLS_ENABLED", false),
-		SupervisorCert:         os.Getenv("AETHER_SUPERVISOR_CERT"),
-		SupervisorKey:          os.Getenv("AETHER_SUPERVISOR_KEY"),
-		SupervisorCA:           os.Getenv("AETHER_SUPERVISOR_CA"),
-		SupervisorServerName:   os.Getenv("AETHER_SUPERVISOR_SERVER_NAME"),
-		AntiforgeryAddr:        getenv("AETHER_ANTIFORGERY_ADDR", "127.0.0.1:7071"),
-		AntiforgeryMTLSEnabled: getenvBool("AETHER_ANTIFORGERY_MTLS_ENABLED", getenvBool("AETHER_MTLS_ENABLED", false)),
-		AntiforgeryCert:        os.Getenv("AETHER_ANTIFORGERY_CERT"),
-		AntiforgeryKey:         os.Getenv("AETHER_ANTIFORGERY_KEY"),
-		AntiforgeryCA:          os.Getenv("AETHER_ANTIFORGERY_CA"),
-		AntiforgeryServerName:  os.Getenv("AETHER_ANTIFORGERY_SERVER_NAME"),
+		HTTPAddr:                  httpAddrFromEnv(),
+		JWTKeyID:                  getenv("AETHER_JWT_KEY_ID", "active"),
+		SupervisorAddr:            getenv("AETHER_SUPERVISOR_ADDR", "127.0.0.1:7070"),
+		PostgresDSN:               getenv("AETHER_POSTGRES_DSN", "postgres://aether:aether@localhost:5432/aether?sslmode=disable"),
+		ClickHouseDSN:             getenv("AETHER_CLICKHOUSE_DSN", "clickhouse://aether:aether@localhost:9000/aether"),
+		RedisAddr:                 getenv("AETHER_REDIS_ADDR", "localhost:6379"),
+		TelemetryFlush:            getenvDuration("AETHER_TELEMETRY_FLUSH", 500*time.Millisecond),
+		MTLSEnabled:               getenvBool("AETHER_MTLS_ENABLED", false),
+		SupervisorCert:            os.Getenv("AETHER_SUPERVISOR_CERT"),
+		SupervisorKey:             os.Getenv("AETHER_SUPERVISOR_KEY"),
+		SupervisorCA:              os.Getenv("AETHER_SUPERVISOR_CA"),
+		SupervisorServerName:      os.Getenv("AETHER_SUPERVISOR_SERVER_NAME"),
+		AntiforgeryAddr:           getenv("AETHER_ANTIFORGERY_ADDR", "127.0.0.1:7071"),
+		AntiforgeryMTLSEnabled:    getenvBool("AETHER_ANTIFORGERY_MTLS_ENABLED", getenvBool("AETHER_MTLS_ENABLED", false)),
+		AntiforgeryCert:           os.Getenv("AETHER_ANTIFORGERY_CERT"),
+		AntiforgeryKey:            os.Getenv("AETHER_ANTIFORGERY_KEY"),
+		AntiforgeryCA:             os.Getenv("AETHER_ANTIFORGERY_CA"),
+		AntiforgeryServerName:     os.Getenv("AETHER_ANTIFORGERY_SERVER_NAME"),
 		NodeCatalogFile:           os.Getenv("AETHER_NODE_CATALOG_FILE"),
 		NodeCatalogReloadInterval: getenvDuration("AETHER_NODE_CATALOG_RELOAD_INTERVAL", 30*time.Second),
 		SubscriptionDelivery:      getenvBool("AETHER_ENABLE_DYNAMIC_SUBS", false),

@@ -44,9 +44,9 @@ INDEX idx_time event_time TYPE minmax GRANULARITY 1;
 // SchemaMigrations upgrades installations created before per-node scoring was
 // available. Every statement is idempotent so it is safe at each startup.
 var SchemaMigrations = []string{
-    `ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS node_id LowCardinality(String) DEFAULT ''`,
-    `ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS instance_id String DEFAULT ''`,
-    `ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS throughput_bps Float64 DEFAULT 0`,
+	`ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS node_id LowCardinality(String) DEFAULT ''`,
+	`ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS instance_id String DEFAULT ''`,
+	`ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS throughput_bps Float64 DEFAULT 0`,
 }
 
 const insertSQL = `INSERT INTO telemetry_events (

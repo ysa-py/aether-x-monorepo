@@ -14,39 +14,39 @@ import (
 
 // NodeScore holds scored node health from ClickHouse aggregation.
 type NodeScore struct {
-	NodeID       string
-	Region       string // eu-central, us-east, etc
-	Country      string // IR, DE, US
-	ISP          string // MCI, Irancell, etc
-	Protocol     string // vless, vmess, trojan, etc
-	Transport    string // ws, grpc, xhttp, quic, etc
-	SuccessRate  float64
-	AvgRTTMs     uint16
+	NodeID        string
+	Region        string // eu-central, us-east, etc
+	Country       string // IR, DE, US
+	ISP           string // MCI, Irancell, etc
+	Protocol      string // vless, vmess, trojan, etc
+	Transport     string // ws, grpc, xhttp, quic, etc
+	SuccessRate   float64
+	AvgRTTMs      uint16
 	RSTCount      uint16
 	BytesTotal    int64
 	ThroughputBps float64
 	LastSeen      time.Time
-	CapacityLoad float64 // 0.0-1.0
+	CapacityLoad  float64 // 0.0-1.0
 }
 
 // ClientContext is inferred from request: IP geo, ISP, client core.
 type ClientContext struct {
-	IP          string
-	Country     string
-	ISP         string // MCI, Irancell...
-	Region      string // client's approximate region
-	Core        string // sing-box, xray-core, clash-meta, shadowrocket, nekobox
-	Platform    string // ios, android, windows, linux
+	IP                  string
+	Country             string
+	ISP                 string // MCI, Irancell...
+	Region              string // client's approximate region
+	Core                string // sing-box, xray-core, clash-meta, shadowrocket, nekobox
+	Platform            string // ios, android, windows, linux
 	TransportPreference string // optional
 }
 
 // OptimizedProfile is the result of dynamic evaluation: ordered nodes best for this client.
 type OptimizedProfile struct {
-	ClientCtx    ClientContext
-	Nodes        []NodeScore // ordered best first
-	Reason       string // human readable reason (for transparency)
-	GeneratedAt  time.Time
-	TTL          time.Duration
+	ClientCtx   ClientContext
+	Nodes       []NodeScore // ordered best first
+	Reason      string      // human readable reason (for transparency)
+	GeneratedAt time.Time
+	TTL         time.Duration
 }
 
 // Optimizer queries ClickHouse feature store and produces optimized profiles.
@@ -180,10 +180,10 @@ func geoProximityBoost(nodeRegion, clientRegion string) float64 {
 	}
 	// Nearby regions mapping
 	nearby := map[string][]string{
-		"tehran":   {"eu-central", "eu-west", "tr-central"},
-		"isfahan":  {"eu-central", "me-central"},
+		"tehran":     {"eu-central", "eu-west", "tr-central"},
+		"isfahan":    {"eu-central", "me-central"},
 		"eu-central": {"eu-west", "me-central", "tr-central"},
-		"us-east":  {"eu-central", "eu-west"},
+		"us-east":    {"eu-central", "eu-west"},
 	}
 	if near, ok := nearby[clientRegion]; ok {
 		for _, r := range near {

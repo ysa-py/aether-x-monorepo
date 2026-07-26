@@ -14,38 +14,38 @@ import (
 // In production this comes from the node registry; here it's a clean struct
 // that config builders consume.
 type NodeConfig struct {
-	ID         string `json:"id"`
-	Address    string `json:"address"` // IP or domain
-	Port       int    `json:"port"`
-	Protocol   string `json:"protocol"` // vless, vmess, trojan, shadowsocks, hysteria2, tuic
-	UUID       string `json:"uuid"` // user UUID for vless/vmess/tuic
-	Password   string `json:"password,omitempty"` // for trojan/shadowsocks/hysteria2/tuic
+	ID       string `json:"id"`
+	Address  string `json:"address"` // IP or domain
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`           // vless, vmess, trojan, shadowsocks, hysteria2, tuic
+	UUID     string `json:"uuid"`               // user UUID for vless/vmess/tuic
+	Password string `json:"password,omitempty"` // for trojan/shadowsocks/hysteria2/tuic
 	// Encryption is VLESS's encryption field or the Shadowsocks cipher/method.
 	Encryption string `json:"encryption,omitempty"`
-	Transport  string `json:"transport"` // tcp, kcp, ws, h2, grpc, httpupgrade, xhttp, quic, ...
-	Path       string `json:"path,omitempty"` // WebSocket / HTTP path
-	Host       string `json:"host,omitempty"` // WebSocket Host header / front domain
-	SNI        string `json:"sni,omitempty"` // TLS SNI
-	ALPN       string `json:"alpn,omitempty"` // TLS ALPN (h2, http/1.1)
+	Transport  string `json:"transport"`          // tcp, kcp, ws, h2, grpc, httpupgrade, xhttp, quic, ...
+	Path       string `json:"path,omitempty"`     // WebSocket / HTTP path
+	Host       string `json:"host,omitempty"`     // WebSocket Host header / front domain
+	SNI        string `json:"sni,omitempty"`      // TLS SNI
+	ALPN       string `json:"alpn,omitempty"`     // TLS ALPN (h2, http/1.1)
 	Insecure   bool   `json:"insecure,omitempty"` // skip TLS verify (dev only)
 
 	// Transport-specific knobs (all optional; zero-value ⇒ sensible default):
-	ServiceName         string `json:"service_name,omitempty"` // gRPC serviceName
+	ServiceName string `json:"service_name,omitempty"` // gRPC serviceName
 	// xhttp mode (packet-up/stream-up/stream-one); kcp uses HeaderType.
-	Mode                string `json:"mode,omitempty"`
-	HeaderType          string `json:"header_type,omitempty"` // kcp obfs / tcp(raw) http header
-	Seed                string `json:"seed,omitempty"` // kcp / xhttp seed
-	GRPCMultiMode       bool   `json:"grpc_multi_mode,omitempty"` // gRPC gun multi-mode
-	Extra               string `json:"extra,omitempty"` // xhttp extra headers path
+	Mode          string `json:"mode,omitempty"`
+	HeaderType    string `json:"header_type,omitempty"`     // kcp obfs / tcp(raw) http header
+	Seed          string `json:"seed,omitempty"`            // kcp / xhttp seed
+	GRPCMultiMode bool   `json:"grpc_multi_mode,omitempty"` // gRPC gun multi-mode
+	Extra         string `json:"extra,omitempty"`           // xhttp extra headers path
 	// Flow is optional VLESS flow control (for example xtls-rprx-vision).
 	// It is emitted only when the reviewed node catalog explicitly sets it.
-	Flow                string `json:"flow,omitempty"`
+	Flow string `json:"flow,omitempty"`
 	// Native QUIC protocol settings. Hysteria2 requires reviewed bandwidth
 	// values; TUIC uses congestion control and UDP relay mode.
-	UpMbps              int    `json:"up_mbps,omitempty"`
-	DownMbps            int    `json:"down_mbps,omitempty"`
-	CongestionControl   string `json:"congestion_control,omitempty"`
-	UDPRelayMode        string `json:"udp_relay_mode,omitempty"`
+	UpMbps            int    `json:"up_mbps,omitempty"`
+	DownMbps          int    `json:"down_mbps,omitempty"`
+	CongestionControl string `json:"congestion_control,omitempty"`
+	UDPRelayMode      string `json:"udp_relay_mode,omitempty"`
 }
 
 // ProxyLinkConfig binds a subscriber's identity to a node's protocol params.

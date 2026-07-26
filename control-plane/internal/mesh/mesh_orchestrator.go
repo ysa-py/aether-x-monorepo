@@ -15,7 +15,7 @@ type MeshNode struct {
 	IP        string
 	Healthy   bool
 	LastSeen  time.Time
-	HopsAway  int // distance in mesh hops
+	HopsAway  int  // distance in mesh hops
 	HasEgress bool // if this node has working international egress
 }
 
