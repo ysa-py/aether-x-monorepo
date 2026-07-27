@@ -65,7 +65,9 @@ async fn production_binary_issues_and_verifies_a_paseto_v4_public_token() {
         .env("AETHER_ANTIFORGERY_ZKP_VERIFY_TOKEN", zkp_token)
         .env("AETHER_MTLS_ENABLED", "false")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        // Keep child diagnostics in the real CI log when startup rejects the
+        // configured cryptographic validation rather than hiding an error.
+        .stderr(Stdio::inherit())
         .spawn()
         .expect("start the production anti-forgery binary");
 
