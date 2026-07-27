@@ -209,7 +209,8 @@ A single dropped probe **never** advances past Degraded. This is property-tested
     overwritten.
   - **Live path** — `telemetry::Collector::with_store_and_forward` buffers telemetry recorded while
     the control plane is detached and replays the backlog on the next `StreamTelemetry` attach.
-    Configured by `AETHER_SUPERVISOR_SPOOL` (+ `_MAX_ITEMS` / `_MAX_BYTES`) in
+    Configured by `AETHER_SUPERVISOR_SPOOL` plus the required
+    `AETHER_SUPERVISOR_SPOOL_KEY` (+ `_MAX_ITEMS` / `_MAX_BYTES`) in
     `core-supervisor/src/main.rs`.
 
   The disk path now requires a real `SpoolSealer` and the production entrypoint requires
