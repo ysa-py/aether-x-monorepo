@@ -22,8 +22,6 @@
 //! accepting manually set health flags.
 
 use std::collections::{BTreeSet, VecDeque};
-use std::fs::File;
-use std::io::BufReader;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,13 +29,12 @@ use std::time::Duration;
 
 use futures::future::join_all;
 use parking_lot::Mutex;
-use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, RootCertStore};
+use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::timeout;
-use tokio_rustls::TlsConnector;
 
 use crate::blackout::{self, BlackoutSignal, IsolationLevel};
 
@@ -86,8 +83,9 @@ pub struct TcpProbeTarget {
     pub scope: TcpProbeScope,
 }
 
-/// A TLS endpoint with a pinned CA bundle. The source refuses an unverified TLS
-/// handshake rather than disabling certificate validation to obtain a signal.
+/// A TLS endpoint with a pinned CA certificate. The source refuses an
+/// unverified TLS handshake rather than disabling certificate validation to
+/// obtain a signal.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TlsProbeTarget {
@@ -95,8 +93,9 @@ pub struct TlsProbeTarget {
     pub address: SocketAddr,
     /// DNS name used for SNI and certificate verification.
     pub server_name: String,
-    /// PEM file containing the root/intermediate CA required by this anchor.
-    pub ca_certificate_pem: PathBuf,
+    /// DER-encoded root/intermediate CA certificate required by this anchor.
+    /// PEM parsing is deliberately not part of the runtime dependency graph.
+    pub ca_certificate_der: PathBuf,
 }
 
 /// A direct DNS query against an operator-selected resolver and an
@@ -221,9 +220,9 @@ impl LiveSignalConfig {
                     "TLS probe address must use a non-zero port".into(),
                 ));
             }
-            if target.ca_certificate_pem.as_os_str().is_empty() {
+            if target.ca_certificate_der.as_os_str().is_empty() {
                 return Err(LiveSignalConfigError::Invalid(
-                    "TLS probe CA path must not be empty".into(),
+                    "TLS probe DER CA path must not be empty".into(),
                 ));
             }
             ServerName::try_from(target.server_name.clone()).map_err(|error| {
@@ -262,9 +261,10 @@ impl LiveSignalConfig {
     }
 }
 
+#[derive(Clone)]
 struct PreparedTlsProbe {
     address: SocketAddr,
-    connector: TlsConnector,
+    config: Arc<ClientConfig>,
     server_name: ServerName<'static>,
 }
 
@@ -572,30 +572,50 @@ async fn probe_tcp(address: SocketAddr, probe_timeout: Duration) -> TcpProbeOutc
 }
 
 async fn probe_tls(target: &PreparedTlsProbe, probe_timeout: Duration) -> TlsProbeOutcome {
-    let stream = match timeout(probe_timeout, TcpStream::connect(target.address)).await {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionReset => {
-            return TlsProbeOutcome::TcpReset;
-        }
-        Ok(Err(_)) => return TlsProbeOutcome::Failed,
-        Err(_) => return TlsProbeOutcome::Timeout,
-    };
+    let target = target.clone();
     match timeout(
         probe_timeout,
-        target.connector.connect(target.server_name.clone(), stream),
+        tokio::task::spawn_blocking(move || probe_tls_blocking(target, probe_timeout)),
     )
     .await
     {
-        Ok(Ok(_stream)) => TlsProbeOutcome::Success,
-        Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionReset => {
-            TlsProbeOutcome::HandshakeReset
-        }
-        Ok(Err(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
-            TlsProbeOutcome::Truncated
-        }
+        Ok(Ok(outcome)) => outcome,
         Ok(Err(_)) => TlsProbeOutcome::Failed,
         Err(_) => TlsProbeOutcome::Timeout,
     }
+}
+
+fn probe_tls_blocking(target: PreparedTlsProbe, probe_timeout: Duration) -> TlsProbeOutcome {
+    let socket = match std::net::TcpStream::connect_timeout(&target.address, probe_timeout) {
+        Ok(socket) => socket,
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {
+            return TlsProbeOutcome::TcpReset;
+        }
+        Err(_) => return TlsProbeOutcome::Failed,
+    };
+    if socket.set_read_timeout(Some(probe_timeout)).is_err()
+        || socket.set_write_timeout(Some(probe_timeout)).is_err()
+    {
+        return TlsProbeOutcome::Failed;
+    }
+    let connection = match ClientConnection::new(target.config, target.server_name) {
+        Ok(connection) => connection,
+        Err(_) => return TlsProbeOutcome::Failed,
+    };
+    let mut stream = StreamOwned::new(connection, socket);
+    while stream.conn.is_handshaking() {
+        match stream.conn.complete_io(&mut stream.sock) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {
+                return TlsProbeOutcome::HandshakeReset;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return TlsProbeOutcome::Truncated;
+            }
+            Err(_) => return TlsProbeOutcome::Failed,
+        }
+    }
+    TlsProbeOutcome::Success
 }
 
 async fn probe_dns(target: &DnsProbeTarget, probe_timeout: Duration) -> DnsProbeOutcome {
@@ -641,24 +661,20 @@ async fn probe_dns(target: &DnsProbeTarget, probe_timeout: Duration) -> DnsProbe
 }
 
 fn prepare_tls_target(target: &TlsProbeTarget) -> Result<PreparedTlsProbe, LiveSignalConfigError> {
-    let file = File::open(&target.ca_certificate_pem)?;
-    let mut reader = BufReader::new(file);
-    let certificates = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(LiveSignalConfigError::Read)?;
-    if certificates.is_empty() {
+    let certificate = std::fs::read(&target.ca_certificate_der)?;
+    if certificate.is_empty() {
         return Err(LiveSignalConfigError::Invalid(
-            "TLS probe CA PEM contains no certificates".into(),
+            "TLS probe DER CA contains no certificate bytes".into(),
         ));
     }
     let mut roots = RootCertStore::empty();
-    for certificate in certificates {
-        roots.add(certificate).map_err(|error| {
+    roots
+        .add(CertificateDer::from(certificate))
+        .map_err(|error| {
             LiveSignalConfigError::Invalid(format!(
-                "TLS probe CA PEM contains an unusable certificate: {error}"
+                "TLS probe DER CA contains an unusable certificate: {error}"
             ))
         })?;
-    }
     let server_name = ServerName::try_from(target.server_name.clone()).map_err(|error| {
         LiveSignalConfigError::Invalid(format!("TLS probe server_name is invalid: {error}"))
     })?;
@@ -667,7 +683,7 @@ fn prepare_tls_target(target: &TlsProbeTarget) -> Result<PreparedTlsProbe, LiveS
         .with_no_client_auth();
     Ok(PreparedTlsProbe {
         address: target.address,
-        connector: TlsConnector::from(Arc::new(config)),
+        config: Arc::new(config),
         server_name,
     })
 }

@@ -73,7 +73,8 @@ The strict validator requires:
   cycle window.
 
 The TLS source refuses to disable certificate verification. For an authorized
-private anchor, mount the anchor's CA PEM read-only at the configured path.
+private anchor, convert the reviewed CA certificate to DER and mount it
+read-only at the configured path.
 
 ## Exact measurements
 
