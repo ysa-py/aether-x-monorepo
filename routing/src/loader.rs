@@ -66,7 +66,9 @@ pub fn preset() -> RuleSet {
         // The preset is static source data, but it must still remain total if
         // somebody edits it incorrectly. Invalid entries are omitted; the
         // matching unit tests pin the expected set so CI catches a bad edit.
-        list.iter().filter_map(|value| value.parse::<IpNet>().ok()).collect()
+        list.iter()
+            .filter_map(|value| value.parse::<IpNet>().ok())
+            .collect()
     };
 
     RuleSet {
@@ -157,7 +159,10 @@ mod tests {
             .iter()
             .find(|category| category.name == "ir")
             .map_or(0, |category| category.cidrs.len());
-        assert_eq!(ir_cidr_count, 8, "a malformed static CIDR must not silently shrink the preset");
+        assert_eq!(
+            ir_cidr_count, 8,
+            "a malformed static CIDR must not silently shrink the preset"
+        );
     }
 
     #[test]

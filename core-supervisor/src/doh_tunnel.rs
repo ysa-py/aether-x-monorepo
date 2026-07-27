@@ -44,12 +44,28 @@ impl DoHTunnel {
     #[must_use]
     pub fn with_iran_resilient_resolvers() -> Self {
         let resolvers = vec![
-            DohResolver::new("https://dns.google/dns-query", vec!["8.8.8.8", "8.8.4.4"], 10),
-            DohResolver::new("https://cloudflare-dns.com/dns-query", vec!["1.1.1.1", "1.0.0.1"], 15),
+            DohResolver::new(
+                "https://dns.google/dns-query",
+                vec!["8.8.8.8", "8.8.4.4"],
+                10,
+            ),
+            DohResolver::new(
+                "https://cloudflare-dns.com/dns-query",
+                vec!["1.1.1.1", "1.0.0.1"],
+                15,
+            ),
             DohResolver::new("https://dns.quad9.net/dns-query", vec!["9.9.9.9"], 20),
-            DohResolver::new("https://doh.opendns.com/dns-query", vec!["208.67.222.222"], 25),
+            DohResolver::new(
+                "https://doh.opendns.com/dns-query",
+                vec!["208.67.222.222"],
+                25,
+            ),
             // Domestic resolvers that may survive intranet-only
-            DohResolver::new("https://dns.arvancloud.ir/dns-query", vec!["185.143.232.0"], 30),
+            DohResolver::new(
+                "https://dns.arvancloud.ir/dns-query",
+                vec!["185.143.232.0"],
+                30,
+            ),
         ];
         Self {
             resolvers: RwLock::new(resolvers),
@@ -86,14 +102,18 @@ impl DoHTunnel {
         // Each DNS query can carry ~63 chars label * ~4 labels ~ 200 bytes after base32
         // Chunk data into 150-byte pieces, base32 encode
         let resolver = self.best_resolver();
-        let resolver_url = resolver.map(|r| r.url).unwrap_or_else(|| "https://dns.google/dns-query".to_string());
+        let resolver_url = resolver
+            .map(|r| r.url)
+            .unwrap_or_else(|| "https://dns.google/dns-query".to_string());
         {
             let mut active = self.active_resolver.write();
             *active = Some(resolver_url.clone());
         }
 
-        self.bytes_tunneled.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        self.query_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.bytes_tunneled
+            .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.query_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         data.chunks(150)
             .enumerate()
@@ -106,7 +126,8 @@ impl DoHTunnel {
 
     #[must_use]
     pub fn bytes_tunneled(&self) -> u64 {
-        self.bytes_tunneled.load(std::sync::atomic::Ordering::Relaxed)
+        self.bytes_tunneled
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[must_use]

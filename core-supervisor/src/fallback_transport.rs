@@ -14,11 +14,11 @@ use std::time::{Duration, Instant};
 /// Fallback transport kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FallbackKind {
-    TlsInTls = 10,       // TLS 1.3 inside TLS (most DPI-resistant)
-    GrpcMux = 20,        // gRPC multiplexing over allowed endpoint
-    DoH = 30,            // DNS-over-HTTPS tunneling
-    IcmpEncap = 40,      // ICMP payload encapsulation (ping tunneling)
-    Ipv6Direct = 50,     // IPv6 direct routing (often overlooked by DPI)
+    TlsInTls = 10,   // TLS 1.3 inside TLS (most DPI-resistant)
+    GrpcMux = 20,    // gRPC multiplexing over allowed endpoint
+    DoH = 30,        // DNS-over-HTTPS tunneling
+    IcmpEncap = 40,  // ICMP payload encapsulation (ping tunneling)
+    Ipv6Direct = 50, // IPv6 direct routing (often overlooked by DPI)
 }
 
 impl FallbackKind {
@@ -143,7 +143,11 @@ impl ReverseTunnelManager {
     pub fn select_best(&self) -> Option<FallbackKind> {
         let health = self.health.read();
         let mut candidates: Vec<&FallbackHealth> = health.iter().filter(|h| h.available).collect();
-        candidates.sort_by(|a, b| b.score().partial_cmp(&a.score()).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            b.score()
+                .partial_cmp(&a.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.first().map(|h| h.kind)
     }
 
@@ -152,7 +156,11 @@ impl ReverseTunnelManager {
     pub fn fallback_chain(&self) -> Vec<FallbackKind> {
         let health = self.health.read();
         let mut ordered: Vec<FallbackHealth> = health.clone();
-        ordered.sort_by(|a, b| b.score().partial_cmp(&a.score()).unwrap_or(std::cmp::Ordering::Equal));
+        ordered.sort_by(|a, b| {
+            b.score()
+                .partial_cmp(&a.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         ordered.into_iter().map(|h| h.kind).collect()
     }
 
@@ -173,8 +181,17 @@ impl ReverseTunnelManager {
     }
 
     /// Establish a reverse tunnel (edge initiated).
-    pub fn establish_tunnel(&self, edge_id: &str, core_addr: &str, transport: FallbackKind) -> String {
-        let tunnel_id = format!("{edge_id}-{}-{:x}", transport.as_str(), Instant::now().elapsed().as_nanos() & 0xFFFF);
+    pub fn establish_tunnel(
+        &self,
+        edge_id: &str,
+        core_addr: &str,
+        transport: FallbackKind,
+    ) -> String {
+        let tunnel_id = format!(
+            "{edge_id}-{}-{:x}",
+            transport.as_str(),
+            Instant::now().elapsed().as_nanos() & 0xFFFF
+        );
         let tunnel = ReverseTunnel {
             edge_id: edge_id.to_string(),
             core_addr: core_addr.to_string(),
@@ -195,7 +212,10 @@ impl ReverseTunnelManager {
     /// Relay bytes through a tunnel (simulate).
     pub fn relay_bytes(&self, edge_id: &str, bytes: u64) -> bool {
         let mut tunnels = self.tunnels.write();
-        if let Some(t) = tunnels.iter_mut().find(|t| t.edge_id == edge_id && t.active) {
+        if let Some(t) = tunnels
+            .iter_mut()
+            .find(|t| t.edge_id == edge_id && t.active)
+        {
             t.bytes_relayed += bytes;
             self.total_bytes.fetch_add(bytes, Ordering::Relaxed);
             true
@@ -217,7 +237,12 @@ impl ReverseTunnelManager {
 
     #[must_use]
     pub fn active_tunnels(&self) -> Vec<ReverseTunnel> {
-        self.tunnels.read().iter().filter(|t| t.active).cloned().collect()
+        self.tunnels
+            .read()
+            .iter()
+            .filter(|t| t.active)
+            .cloned()
+            .collect()
     }
 
     #[must_use]

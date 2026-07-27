@@ -17,10 +17,10 @@ const DefaultNodeScoreWindow = 10 * time.Minute
 // from ClickHouse. It never synthesizes endpoint addresses; callers must join
 // score NodeID values with the verified operator node catalog.
 type ProductionNodeScoreReader struct {
-	conn        clickhouse.Conn
+	conn         clickhouse.Conn
 	queryTimeout time.Duration
-	window      time.Duration
-	minSamples  uint64
+	window       time.Duration
+	minSamples   uint64
 }
 
 // NewProductionNodeScoreReader opens a real ClickHouse connection for scoring.
@@ -85,7 +85,7 @@ func (r *ProductionNodeScoreReader) ReadScores(
 	rows, err := r.conn.Query(
 		queryCtx,
 		nodeScoreSQL,
-		int64(r.window / time.Second),
+		int64(r.window/time.Second),
 		isp,
 		isp,
 		r.minSamples,

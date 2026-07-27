@@ -13,29 +13,29 @@ import (
 type ActionType string
 
 const (
-	ActionRedeploy      ActionType = "redeploy"
-	ActionPortRotation  ActionType = "port-rotation"
-	ActionIPMutation    ActionType = "ip-mutation"
-	ActionScale         ActionType = "scale"
+	ActionRedeploy     ActionType = "redeploy"
+	ActionPortRotation ActionType = "port-rotation"
+	ActionIPMutation   ActionType = "ip-mutation"
+	ActionScale        ActionType = "scale"
 )
 
 // TelemetryAlert from ClickHouse
 type TelemetryAlert struct {
-	NodeID      string
-	DropRate    float64
-	RSTCount    int
-	RTTMs       uint16
-	Timestamp   time.Time
-	Severity    string // critical, warning
+	NodeID    string
+	DropRate  float64
+	RSTCount  int
+	RTTMs     uint16
+	Timestamp time.Time
+	Severity  string // critical, warning
 }
 
 // HealerDecision
 type HealerDecision struct {
-	Action     ActionType
-	NodeID     string
-	Reason     string
-	Timestamp  time.Time
-	Executed   bool
+	Action    ActionType
+	NodeID    string
+	Reason    string
+	Timestamp time.Time
+	Executed  bool
 }
 
 // NorthflankAPIClient mock interface
@@ -69,10 +69,10 @@ func (m *MockClient) MutateIP(ctx context.Context, serviceID string) (string, er
 
 // Healer engine
 type Healer struct {
-	mu       sync.RWMutex
-	client   NorthflankAPIClient
-	decisions []HealerDecision
-	cooldown  map[string]time.Time
+	mu          sync.RWMutex
+	client      NorthflankAPIClient
+	decisions   []HealerDecision
+	cooldown    map[string]time.Time
 	cooldownDur time.Duration
 }
 

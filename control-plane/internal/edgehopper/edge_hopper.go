@@ -22,14 +22,14 @@ const (
 
 // WorkerEndpoint represents an ephemeral edge worker
 type WorkerEndpoint struct {
-	ID         string
-	Provider   CloudProvider
-	URL        string
-	Region     string
-	CreatedAt  time.Time
-	Healthy    bool
-	RTTMs      uint16
-	Requests   int64
+	ID        string
+	Provider  CloudProvider
+	URL       string
+	Region    string
+	CreatedAt time.Time
+	Healthy   bool
+	RTTMs     uint16
+	Requests  int64
 }
 
 // HopperEvent for detection

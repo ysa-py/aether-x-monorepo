@@ -11,9 +11,9 @@
 //! Production would use `ark-groth16` + circom circuit; here mock with Pedersen-like commitments
 //! and deterministic hashing for zero dependencies.
 
+use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use parking_lot::RwLock;
 
 /// Subscription commitment (hash of token + blinding)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -40,7 +40,7 @@ pub struct ZkProof {
     pub commitment: Commitment,
     pub nullifier: [u8; 32], // prevents double spend, derived from token+domain separator
     pub challenge_response: [u8; 32], // mock Fiat-Shamir response
-    pub merkle_root: [u8; 32],       // root client claims membership in
+    pub merkle_root: [u8; 32], // root client claims membership in
 }
 
 /// Subscription state for verification (from transparency log / antiforgery)
@@ -49,8 +49,8 @@ pub struct SubscriptionState {
     pub commitment: Commitment,
     pub expires_unix: i64,
     pub revoked: bool,
-    pub bytes_total: int64,
-    pub bytes_used: int64,
+    pub bytes_total: i64,
+    pub bytes_used: i64,
 }
 
 /// ZKP Verifier – validates proofs without learning token
@@ -97,7 +97,11 @@ impl ZkpVerifier {
     /// 2. Merkle root matches current
     /// 3. Nullifier not used before (prevent double use of same token proof)
     /// 4. Mock challenge_response validates (Fiat-Shamir)
-    pub fn verify_proof(&self, proof: &ZkProof, now_unix: i64) -> Result<ZkVerificationResult, ZkError> {
+    pub fn verify_proof(
+        &self,
+        proof: &ZkProof,
+        now_unix: i64,
+    ) -> Result<ZkVerificationResult, ZkError> {
         // 1. Merkle root check
         let current_root = *self.merkle_root.read();
         if proof.merkle_root != current_root {

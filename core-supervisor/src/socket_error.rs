@@ -103,12 +103,36 @@ mod tests {
     #[test]
     fn classifies_known_linux_socket_errors() {
         let cases = [
-            (11, DataPlaneError::WouldBlock, SocketRecoveryAction::RegisterWritable),
-            (4, DataPlaneError::Interrupted, SocketRecoveryAction::RetryAfter(Duration::from_millis(1))),
-            (100, DataPlaneError::NetworkDown, SocketRecoveryAction::ReconnectViaFallback),
-            (104, DataPlaneError::ConnectionReset, SocketRecoveryAction::ReconnectViaFallback),
-            (32, DataPlaneError::BrokenPipe, SocketRecoveryAction::CloseGracefully),
-            (107, DataPlaneError::NotConnected, SocketRecoveryAction::ReconnectViaFallback),
+            (
+                11,
+                DataPlaneError::WouldBlock,
+                SocketRecoveryAction::RegisterWritable,
+            ),
+            (
+                4,
+                DataPlaneError::Interrupted,
+                SocketRecoveryAction::RetryAfter(Duration::from_millis(1)),
+            ),
+            (
+                100,
+                DataPlaneError::NetworkDown,
+                SocketRecoveryAction::ReconnectViaFallback,
+            ),
+            (
+                104,
+                DataPlaneError::ConnectionReset,
+                SocketRecoveryAction::ReconnectViaFallback,
+            ),
+            (
+                32,
+                DataPlaneError::BrokenPipe,
+                SocketRecoveryAction::CloseGracefully,
+            ),
+            (
+                107,
+                DataPlaneError::NotConnected,
+                SocketRecoveryAction::ReconnectViaFallback,
+            ),
         ];
 
         for (code, expected_error, expected_action) in cases {

@@ -80,9 +80,7 @@ impl MpQuicSession {
     pub fn remove_path(&self, iface_name: &str) -> bool {
         let removed = self.paths.write().remove(iface_name).is_some();
         if removed {
-            self.active_interfaces
-                .write()
-                .retain(|n| n != iface_name);
+            self.active_interfaces.write().retain(|n| n != iface_name);
         }
         removed
     }
@@ -97,12 +95,13 @@ impl MpQuicSession {
 
         // Pick lowest RTT path for latency-sensitive, or both for throughput
         // Simplified: choose lowest RTT
-        let best = paths
-            .values()
-            .min_by_key(|p| p.rtt_ms)
-            .ok_or(MpQuicError::NoPath)?;
-
-        let iface_name = best.interface.name.clone();
+        let (iface_name, best_rtt_ms) = {
+            let best = paths
+                .values()
+                .min_by_key(|p| p.rtt_ms)
+                .ok_or(MpQuicError::NoPath)?;
+            (best.interface.name.clone(), best.rtt_ms)
+        };
         drop(paths);
 
         // Update stats
@@ -117,12 +116,15 @@ impl MpQuicSession {
             .fetch_add(data_len as u64, Ordering::Relaxed);
 
         // Simulate latency = RTT/2 + processing
-        let latency = Duration::from_millis((best.rtt_ms / 2) as u64 + 5);
+        let latency = Duration::from_millis((best_rtt_ms / 2) as u64 + 5);
         Ok((iface_name, latency))
     }
 
     /// Send bonded – split data across all active paths for N× throughput
-    pub fn send_bonded(&self, data_len: usize) -> Result<Vec<(String, usize, Duration)>, MpQuicError> {
+    pub fn send_bonded(
+        &self,
+        data_len: usize,
+    ) -> Result<Vec<(String, usize, Duration)>, MpQuicError> {
         let active_names = self.active_interfaces.read().clone();
         if active_names.is_empty() {
             return Err(MpQuicError::NoPath);

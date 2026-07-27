@@ -35,8 +35,8 @@ type Session struct {
 
 // SessionManager handles session state with Postgres as source of truth + Redis cache + auto-failover
 type SessionManager struct {
-	redis  *redis.Client
-	pg     SessionStore // Postgres-backed store
+	redis *redis.Client
+	pg    SessionStore // Postgres-backed store
 	// Fixed lock striping serializes updates per session without an unbounded
 	// lock map. This prevents concurrent heartbeat/migration writes from
 	// resurrecting stale node state during a failover.

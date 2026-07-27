@@ -4,6 +4,13 @@ modules:
 lint:
   use:
     - STANDARD
+  # These names are already part of the committed v1 API surface and the
+  # generated Go/Rust clients; keep them wire/source compatible while still
+  # enforcing the rest of Buf STANDARD.
+  except:
+    - ENUM_VALUE_PREFIX
+    - ENUM_ZERO_VALUE_SUFFIX
+    - RPC_RESPONSE_STANDARD_NAME
 breaking:
   use:
     - WIRE_JSON

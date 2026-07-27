@@ -24,7 +24,9 @@ struct Lcg {
 
 impl Lcg {
     fn new(seed: u64) -> Self {
-        Self { state: seed.wrapping_add(0x9E37_79B9_7F4A_7C15) }
+        Self {
+            state: seed.wrapping_add(0x9E37_79B9_7F4A_7C15),
+        }
     }
     #[inline]
     fn next_u64(&mut self) -> u64 {
@@ -39,7 +41,11 @@ impl Lcg {
         // 53-bit precision float in (0,1]
         let v = self.next_u64() >> 11;
         let f = (v as f64) / (9_007_199_254_740_992.0);
-        if f <= 0.0 { f64::MIN_POSITIVE } else { f }
+        if f <= 0.0 {
+            f64::MIN_POSITIVE
+        } else {
+            f
+        }
     }
 }
 
@@ -143,8 +149,7 @@ impl ChaffEngine {
     pub fn chaff_packet(&mut self, original_len: u32, seed: u64) -> ChaffedPacket {
         let mut lcg = Lcg::new(seed ^ self.packets_chaffed.wrapping_add(1));
         let padding_raw = poisson_sample(&mut lcg, self.config.lambda);
-        let padding = padding_raw
-            .clamp(self.config.min_padding, self.config.max_padding);
+        let padding = padding_raw.clamp(self.config.min_padding, self.config.max_padding);
 
         // Entropy score: estimate of how much padding randomizes low-entropy payloads.
         // Real implementations would measure payload entropy; here we model.
@@ -226,7 +231,11 @@ mod tests {
             let ch = eng.chaff_packet(1200, seed);
             assert!(ch.padding <= eng.config.max_padding);
             assert!(ch.padded_len >= 1200);
-            assert!(ch.jitter.as_micros() <= 20000, "jitter too large: {:?}", ch.jitter);
+            assert!(
+                ch.jitter.as_micros() <= 20000,
+                "jitter too large: {:?}",
+                ch.jitter
+            );
         }
     }
 

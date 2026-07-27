@@ -12,16 +12,16 @@ import (
 
 // NodeMetrics from ClickHouse
 type NodeMetrics struct {
-	NodeID      string
-	Region      string
-	Protocol    string
-	Transport   string
-	RTTMs       uint16
-	RSTCount    uint16
+	NodeID        string
+	Region        string
+	Protocol      string
+	Transport     string
+	RTTMs         uint16
+	RSTCount      uint16
 	ThroughputBps float64
 	GeoDistanceKm float64
-	SuccessRate float64
-	LastSeen    time.Time
+	SuccessRate   float64
+	LastSeen      time.Time
 }
 
 // OptimizedNode for subscription
@@ -56,8 +56,8 @@ func (s *SubOptimizer) Optimize(ctx context.Context, isp, region, core string) (
 		weight := score * m.SuccessRate
 		nodes = append(nodes, OptimizedNode{
 			NodeMetrics: m,
-			Weight: weight,
-			Score: score,
+			Weight:      weight,
+			Score:       score,
 		})
 	}
 

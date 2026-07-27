@@ -23,9 +23,9 @@ func NewSessionStore(redisAddr string, pgStore SessionStore) *SessionStoreManage
 
 // SessionStoreStats for monitoring
 type SessionStoreStats struct {
-	ActiveSessions int
+	ActiveSessions  int
 	TotalMigrations int64
-	RedisConnected bool
+	RedisConnected  bool
 }
 
 // Stats returns session store stats (wrapper)

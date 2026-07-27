@@ -20,20 +20,20 @@ const (
 )
 
 type HedgedPacket struct {
-	ID         string
-	Data       []byte
-	Protocols  []Protocol
-	SentAt     time.Time
-	Acked      bool
-	Winner     Protocol
+	ID        string
+	Data      []byte
+	Protocols []Protocol
+	SentAt    time.Time
+	Acked     bool
+	Winner    Protocol
 }
 
 type HedgedRouter struct {
-	mu        sync.RWMutex
-	packets   map[string]*HedgedPacket
-	sent      int64
-	acked     int64
-	deduped   int64
+	mu      sync.RWMutex
+	packets map[string]*HedgedPacket
+	sent    int64
+	acked   int64
+	deduped int64
 }
 
 func New() *HedgedRouter {

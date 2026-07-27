@@ -64,7 +64,9 @@ impl HoneypotEndpoint {
             id: "shaparak".into(),
             address: "www.shaparak.ir".into(),
             sni: "www.shaparak.ir".into(),
-            http_response: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}".into(),
+            http_response:
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}"
+                    .into(),
             priority: 10,
             healthy: true,
         }

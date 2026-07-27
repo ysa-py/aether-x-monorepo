@@ -16,11 +16,11 @@ import (
 type ChannelType string
 
 const (
-	ChannelDNSTXT    ChannelType = "dns-txt"
-	ChannelIPFS      ChannelType = "ipfs"
-	ChannelArweave   ChannelType = "arweave"
-	ChannelTelegram  ChannelType = "telegram-webhook"
-	ChannelDoH       ChannelType = "doh-txt"
+	ChannelDNSTXT   ChannelType = "dns-txt"
+	ChannelIPFS     ChannelType = "ipfs"
+	ChannelArweave  ChannelType = "arweave"
+	ChannelTelegram ChannelType = "telegram-webhook"
+	ChannelDoH      ChannelType = "doh-txt"
 )
 
 // OutOfBandProfile is a subscription profile distributed out-of-band
@@ -196,9 +196,9 @@ func (d *Distributor) ListByChannel(ch ChannelType) []*OutOfBandProfile {
 }
 
 type DistributorStats struct {
-	Total   int
-	Sent    int64
-	Failed  int64
+	Total     int
+	Sent      int64
+	Failed    int64
 	ByChannel map[ChannelType]int
 }
 

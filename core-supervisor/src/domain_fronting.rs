@@ -8,7 +8,7 @@
 //! This is critical under Blackout Isolation Bounds: domestic SNI values
 //! survive DPI, while direct foreign SNI values are blocked.
 
-use crate::sni_whitelist::{SniWhitelist, SniCategory};
+use crate::sni_whitelist::{SniCategory, SniWhitelist};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -81,10 +81,20 @@ impl DomainFrontingEngine {
         let wl = Arc::new(SniWhitelist::with_iran_defaults());
         let engine = Self::new(wl);
         // Pre-populate with common fronting pairs
-        engine.add_config(FrontingConfig::new("www.digikala.com", "aether-x.core.example").with_cdn(false));
-        engine.add_config(FrontingConfig::new("www.aparat.com", "aether-x.core.example"));
-        engine.add_config(FrontingConfig::new("arvancloud.ir", "aether-x.core.example").with_cdn(true));
-        engine.add_config(FrontingConfig::new("www.shaparak.ir", "aether-x.core.example"));
+        engine.add_config(
+            FrontingConfig::new("www.digikala.com", "aether-x.core.example").with_cdn(false),
+        );
+        engine.add_config(FrontingConfig::new(
+            "www.aparat.com",
+            "aether-x.core.example",
+        ));
+        engine.add_config(
+            FrontingConfig::new("arvancloud.ir", "aether-x.core.example").with_cdn(true),
+        );
+        engine.add_config(FrontingConfig::new(
+            "www.shaparak.ir",
+            "aether-x.core.example",
+        ));
         engine
     }
 
@@ -107,8 +117,12 @@ impl DomainFrontingEngine {
             m.front_sni.clone()
         } else {
             // auto-pick best banking or ecommerce SNI
-            self.whitelist.best_for_category(Some(SniCategory::Banking))
-                .or_else(|| self.whitelist.best_for_category(Some(SniCategory::ECommerce)))
+            self.whitelist
+                .best_for_category(Some(SniCategory::Banking))
+                .or_else(|| {
+                    self.whitelist
+                        .best_for_category(Some(SniCategory::ECommerce))
+                })
                 .or_else(|| self.whitelist.best_for_category(None))?
                 .sni
         };
@@ -180,7 +194,11 @@ mod tests {
     #[test]
     fn rotate_on_block() {
         let engine = DomainFrontingEngine::with_iran_defaults();
-        let first = engine.fronted_handshake("aether-x.core.example").unwrap().outer_sni.clone();
+        let first = engine
+            .fronted_handshake("aether-x.core.example")
+            .unwrap()
+            .outer_sni
+            .clone();
         let rotated = engine.rotate_front(&first).unwrap();
         assert_ne!(rotated.front_sni, first);
         assert!(engine.whitelist().is_whitelisted(&rotated.front_sni));
@@ -189,7 +207,9 @@ mod tests {
     #[test]
     fn unknown_host_auto_picks_whitelisted() {
         let engine = DomainFrontingEngine::with_iran_defaults();
-        let hs = engine.fronted_handshake("unknown.internal.example").unwrap();
+        let hs = engine
+            .fronted_handshake("unknown.internal.example")
+            .unwrap();
         assert!(hs.valid);
         assert_ne!(hs.outer_sni, "unknown.internal.example");
     }

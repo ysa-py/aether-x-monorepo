@@ -267,14 +267,14 @@ func main() {
 			defer cancel()
 			return sup.ListCores(ctx)
 		},
-		ReadyChecks: readyChecks,
+		ReadyChecks:                     readyChecks,
 		Issuer:                          jwtIssuer,
 		AllowUnauthenticatedDevelopment: cfg.Development,
 		Build:                           "0.1.0",
-		MCP:                    mcpSrv,
-		DynamicSubs:            dynamicSvc,
-		NetworkContextResolver: networkResolver,
-		Sessions:               sessionManager,
+		MCP:                             mcpSrv,
+		DynamicSubs:                     dynamicSvc,
+		NetworkContextResolver:          networkResolver,
+		Sessions:                        sessionManager,
 	}
 	if afc != nil {
 		apiSrv.Antiforgery = afc.Raw()

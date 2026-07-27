@@ -20,7 +20,11 @@ pub struct ConnectionId(pub String);
 impl ConnectionId {
     pub fn new_random(seed: u64) -> Self {
         // Deterministic for tests; real impl uses rand
-        Self(format!("{:016x}{:016x}", seed, seed.wrapping_mul(0x9E3779B97F4A7C15)))
+        Self(format!(
+            "{:016x}{:016x}",
+            seed,
+            seed.wrapping_mul(0x9E3779B97F4A7C15)
+        ))
     }
 }
 
@@ -205,7 +209,11 @@ impl QuicMigrationManager {
 
     #[must_use]
     pub fn total_migrations(&self) -> u64 {
-        self.connections.read().values().map(|c| c.migration_count).sum()
+        self.connections
+            .read()
+            .values()
+            .map(|c| c.migration_count)
+            .sum()
     }
 
     #[must_use]

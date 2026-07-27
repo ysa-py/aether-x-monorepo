@@ -73,10 +73,7 @@ impl CoreSupervisor {
             // A spawned PID with no listener is not a running core. Best-effort
             // cleanup prevents a failed start from leaking a child process;
             // the readiness error remains the caller-visible root cause.
-            if let Err(cleanup_error) = adapter
-                .stop(&handle, false, Duration::from_secs(2))
-                .await
-            {
+            if let Err(cleanup_error) = adapter.stop(&handle, false, Duration::from_secs(2)).await {
                 tracing::error!(
                     instance = %handle.instance_id,
                     error = %cleanup_error,

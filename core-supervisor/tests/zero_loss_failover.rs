@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 //! Zero-loss failover test suite — verifies enterprise hyper-resilient architecture
 //! under simulated network blackouts and DPI drops.
 //!
@@ -18,7 +20,9 @@ use aether_supervisor::{
     enterprise::EnterpriseEngine,
     fallback_transport::{FallbackKind, ReverseTunnelManager},
     happy_eyeballs::{HappyEyeballs, HappyEyeballsConfig, ProbeCandidate},
-    quic_migration::{ConnectionId, NetworkPath, QuicConnection, QuicMigrationManager, QuicProtocol},
+    quic_migration::{
+        ConnectionId, NetworkPath, QuicConnection, QuicMigrationManager, QuicProtocol,
+    },
     reverse_relay::{EdgeRelay, ReverseRelayEngine},
 };
 
@@ -166,7 +170,9 @@ fn ebpf_morph_engine_fragmentation_and_ooo() {
         payload_len: 20,
         enabled: true,
     });
-    let ooo = engine.inject_ooo(flow, 1000, b"abcdefghijklmnopqrstuvwxyz").unwrap();
+    let ooo = engine
+        .inject_ooo(flow, 1000, b"abcdefghijklmnopqrstuvwxyz")
+        .unwrap();
     assert_eq!(ooo.seq, 995);
     assert_eq!(ooo.payload.len(), 20);
 
@@ -209,7 +215,11 @@ fn chaffing_obscures_size_distribution() {
 
     // Check distribution: not all same (Poisson randomization)
     let unique: std::collections::HashSet<u32> = padded_sizes.iter().cloned().collect();
-    assert!(unique.len() > 20, "chaffing should produce varied sizes, got {} unique", unique.len());
+    assert!(
+        unique.len() > 20,
+        "chaffing should produce varied sizes, got {} unique",
+        unique.len()
+    );
 }
 
 #[test]
@@ -234,7 +244,10 @@ fn happy_eyeballs_racing_zero_perceived_disconnect() {
     let elapsed = start.elapsed();
 
     assert!(result.is_success(), "racing should find a working path");
-    assert!(elapsed < Duration::from_secs(1), "racing must be fast (<1s), took {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "racing must be fast (<1s), took {elapsed:?}"
+    );
     assert!(result.winner.is_some());
     // Winner should be IPv6 or TLS (fastest)
     let winner_id = result.winner.unwrap().candidate_id;
@@ -255,7 +268,10 @@ fn quic_cid_migration_zero_disconnection() {
     // Simulate NAT rebinding / ISP throttling -> migrate to new local IP
     let new_path = NetworkPath::new("10.0.0.5:54321", "5.6.7.8:443");
     let outcome = mgr.migrate(&id_str, new_path);
-    assert_eq!(outcome, aether_supervisor::quic_migration::MigrationOutcome::ValidationStarted);
+    assert_eq!(
+        outcome,
+        aether_supervisor::quic_migration::MigrationOutcome::ValidationStarted
+    );
 
     // Path validation succeeds (PATH_CHALLENGE/RESPONSE)
     assert!(mgr.complete_validation(&id_str, true, 45));
@@ -265,7 +281,10 @@ fn quic_cid_migration_zero_disconnection() {
     // Stabilize: connection ID preserved, session continuous
     assert!(mgr.stabilize(&id_str));
     let snap2 = mgr.get(&id_str).unwrap();
-    assert_eq!(snap2.conn_id, id_str, "Connection ID must survive migration (zero disconnection)");
+    assert_eq!(
+        snap2.conn_id, id_str,
+        "Connection ID must survive migration (zero disconnection)"
+    );
 
     // Total migrations
     assert_eq!(mgr.total_migrations(), 1);
@@ -280,8 +299,14 @@ fn reverse_relay_engine_full_cycle() {
     // Connect both edges
     let r1 = engine.connect_edge("tehran-mci-01", "core.eu:443");
     let r2 = engine.connect_edge("isfahan-irancell-01", "core.eu:443");
-    assert!(matches!(r1, aether_supervisor::reverse_relay::ConnectResult::Connected { .. }));
-    assert!(matches!(r2, aether_supervisor::reverse_relay::ConnectResult::Connected { .. }));
+    assert!(matches!(
+        r1,
+        aether_supervisor::reverse_relay::ConnectResult::Connected { .. }
+    ));
+    assert!(matches!(
+        r2,
+        aether_supervisor::reverse_relay::ConnectResult::Connected { .. }
+    ));
     assert_eq!(engine.active_edges().len(), 2);
 
     // Simulate DPI disconnect of one edge
@@ -309,7 +334,10 @@ fn enterprise_engine_end_to_end_blackout() {
 
     // Routing severed: escalate + race + bond
     let res_severed = engine.tick(&routing_severed_signal(), candidates.clone());
-    assert_eq!(res_severed.blackout_level, aether_supervisor::blackout::IsolationLevel::RoutingSevered);
+    assert_eq!(
+        res_severed.blackout_level,
+        aether_supervisor::blackout::IsolationLevel::RoutingSevered
+    );
     assert!(res_severed.race_winner.is_some());
     assert!(res_severed.throughput_multiplier >= 1.0);
 
@@ -320,7 +348,10 @@ fn enterprise_engine_end_to_end_blackout() {
 
     // Recovery: should go back to Normal instantly
     let res_recovery = engine.tick(&normal_signal(), candidates);
-    assert_eq!(res_recovery.blackout_level, aether_supervisor::blackout::IsolationLevel::Normal);
+    assert_eq!(
+        res_recovery.blackout_level,
+        aether_supervisor::blackout::IsolationLevel::Normal
+    );
 }
 
 #[test]
@@ -332,5 +363,8 @@ fn buffer_replay_preserves_data_across_failover() {
     // Simulate transport drop
     let frames = replay.on_drop();
     assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0].data, payload, "buffer replay must preserve data across failover (zero loss)");
+    assert_eq!(
+        frames[0].data, payload,
+        "buffer replay must preserve data across failover (zero loss)"
+    );
 }

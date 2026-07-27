@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 //! Absolute-Resilient Kernel & Control-Plane Integration Tests
 //! Verifies system survival under 40% packet loss and DPI drops
 //! Tests all new modules: sockops, ai_morph, fec_engine, pqc_handshake, os_polymorphism, zkp_auth, honeypot, deterministic_fallback
@@ -7,7 +9,7 @@ use aether_supervisor::{
     ai_morph::{OnnxMorphEngine, TrafficModelKind},
     deterministic_fallback::DeterministicFallback,
     fec_engine::{AdaptiveFec, FecConfig, FecDecoder, FecEncoder},
-    os_polymorphism::{OsPolymorphismEngine, TcpPacketFields, TcpOption},
+    os_polymorphism::{OsPolymorphismEngine, TcpOption, TcpPacketFields},
     pqc_handshake::PqcHandshake,
     sockops::{SockHashManager, SockKey},
     zkp_auth::{create_proof, Commitment, ZkpVerifier},
@@ -65,7 +67,7 @@ fn fec_survives_40_percent_loss() {
 
     // Simulate 40% loss: drop 7 shards (first 7 data)
     let received: Vec<_> = shards.into_iter().skip(1).collect(); // lose 1, still need 10
-    // For this test lose 1, should recover
+                                                                 // For this test lose 1, should recover
     let dec = FecDecoder::new();
     let decoded = dec.decode(received, &cfg, data.len()).unwrap();
     assert_eq!(decoded, data);

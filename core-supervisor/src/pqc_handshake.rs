@@ -224,7 +224,12 @@ impl PqcHandshake {
     }
 
     /// Pre-calculate pipeline for 0-RTT: generate N keypair bundles in advance
-    pub fn precalculate_pipeline(&self, server_x_pub: &[u8; 32], server_mlkem_pub: &[u8], count: usize) {
+    pub fn precalculate_pipeline(
+        &self,
+        server_x_pub: &[u8; 32],
+        server_mlkem_pub: &[u8],
+        count: usize,
+    ) {
         let mut pipeline = self.pipeline.write();
         pipeline.clear();
         for i in 0..count.min(self.pipeline_size) {
@@ -299,7 +304,11 @@ impl PqcHandshake {
         let decap_mock = hasher.finalize();
         let mut mlkem_secret_deterministic = [0u8; 32];
         mlkem_secret_deterministic.copy_from_slice(&decap_mock[0..32]);
-        let hybrid = hkdf_derive(&x_secret, &mlkem_secret_deterministic, b"aether-x hybrid pqc");
+        let hybrid = hkdf_derive(
+            &x_secret,
+            &mlkem_secret_deterministic,
+            b"aether-x hybrid pqc",
+        );
         let (mlkem_ct, _) = dummy_kp.encapsulate(server_mlkem_pub);
         let bundle = PqcCiphertextBundle {
             x25519_public: self.x25519.public,
@@ -392,7 +401,9 @@ mod tests {
         let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
         let mut server_x_pub = [0u8; 32];
         server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-        let (bundle, client_secret) = client.client_handshake(&server_x_pub, &server_ml_pub).unwrap();
+        let (bundle, client_secret) = client
+            .client_handshake(&server_x_pub, &server_ml_pub)
+            .unwrap();
         let server_secret = server.server_handshake(&bundle).unwrap();
         assert_eq!(client_secret, server_secret);
     }
@@ -417,7 +428,9 @@ mod tests {
         let mut server_x_pub = [0u8; 32];
         server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
 
-        let (bundle, client_secret) = client.client_handshake(&server_x_pub, &server_ml_pub).unwrap();
+        let (bundle, client_secret) = client
+            .client_handshake(&server_x_pub, &server_ml_pub)
+            .unwrap();
         assert!(bundle.ech_encrypted_inner.is_some());
 
         let server_secret = server.server_handshake(&bundle).unwrap();
@@ -436,7 +449,9 @@ mod tests {
         assert_eq!(client.pipeline_len(), 5);
 
         // First handshake should hit 0-RTT pipeline
-        let (_bundle, _secret) = client.client_handshake(&server_x_pub, &server_ml_pub).unwrap();
+        let (_bundle, _secret) = client
+            .client_handshake(&server_x_pub, &server_ml_pub)
+            .unwrap();
         assert_eq!(client.zero_rtt_hits(), 1);
         assert_eq!(client.pipeline_len(), 4); // one used
     }
@@ -446,7 +461,9 @@ mod tests {
         let client = PqcHandshake::from_seed(1);
         let bad_pub = vec![0u8; 100];
         let server_x_pub = [0u8; 32];
-        let err = client.client_handshake(&server_x_pub, &bad_pub).unwrap_err();
+        let err = client
+            .client_handshake(&server_x_pub, &bad_pub)
+            .unwrap_err();
         assert_eq!(err, PqcError::InvalidPublicKey);
     }
 
@@ -458,7 +475,9 @@ mod tests {
         let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
         let mut server_x_pub = [0u8; 32];
         server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-        let (bundle, _) = client.client_handshake(&server_x_pub, &server_ml_pub).unwrap();
+        let (bundle, _) = client
+            .client_handshake(&server_x_pub, &server_ml_pub)
+            .unwrap();
         assert_eq!(client.handshakes_done(), 1);
         server.server_handshake(&bundle).unwrap();
         assert_eq!(server.handshakes_done(), 1);

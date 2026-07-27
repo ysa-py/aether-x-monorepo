@@ -219,7 +219,10 @@ mod tests {
 
         // Complete migration — user app fd 10 preserved!
         let preserved_fd = mgr.complete_migration(10).unwrap();
-        assert_eq!(preserved_fd, 10, "user fd must be preserved for transparency");
+        assert_eq!(
+            preserved_fd, 10,
+            "user fd must be preserved for transparency"
+        );
         assert_eq!(mgr.shadow_count(), 0);
         assert_eq!(mgr.original_count(), 1);
         assert_eq!(mgr.migration_count(), 1);

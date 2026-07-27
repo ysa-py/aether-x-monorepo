@@ -342,7 +342,9 @@ impl std::fmt::Display for FecError {
         match self {
             Self::EmptyData => write!(f, "empty data"),
             Self::InvalidConfig => write!(f, "invalid fec config"),
-            Self::NotEnoughShards { got, need } => write!(f, "not enough shards: got {got}, need {need}"),
+            Self::NotEnoughShards { got, need } => {
+                write!(f, "not enough shards: got {got}, need {need}")
+            }
             Self::NotEnoughParity { missing, parity } => {
                 write!(f, "not enough parity: missing {missing}, parity {parity}")
             }
@@ -439,6 +441,12 @@ mod tests {
         let result = dec.decode(received, &cfg, data.len());
         // With our XOR scheme, recovery of 6 missing data shards with 7 parity is possible for first missing, but not all – we test that it at least attempts
         // In this simplified test we only guarantee single shard recovery, so we test single loss case for 40% config
-        assert!(result.is_ok() || matches!(result.unwrap_err(), FecError::NotEnoughParity { .. } | FecError::NotEnoughShards { .. }));
+        assert!(
+            result.is_ok()
+                || matches!(
+                    result.unwrap_err(),
+                    FecError::NotEnoughParity { .. } | FecError::NotEnoughShards { .. }
+                )
+        );
     }
 }

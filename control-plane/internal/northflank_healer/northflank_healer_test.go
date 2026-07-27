@@ -12,11 +12,11 @@ func TestHealer_SevereDrop_IPMutation(t *testing.T) {
 	ctx := context.Background()
 
 	alert := TelemetryAlert{
-		NodeID:   "core-supervisor",
-		DropRate: 0.6,
-		RSTCount: 25,
-		RTTMs:    100,
-		Severity: "critical",
+		NodeID:    "core-supervisor",
+		DropRate:  0.6,
+		RSTCount:  25,
+		RTTMs:     100,
+		Severity:  "critical",
 		Timestamp: time.Now(),
 	}
 
@@ -38,10 +38,10 @@ func TestHealer_HighRTT_PortRotation(t *testing.T) {
 	ctx := context.Background()
 
 	alert := TelemetryAlert{
-		NodeID:   "node-01",
-		DropRate: 0.1,
-		RSTCount: 2,
-		RTTMs:    600,
+		NodeID:    "node-01",
+		DropRate:  0.1,
+		RSTCount:  2,
+		RTTMs:     600,
 		Timestamp: time.Now(),
 	}
 

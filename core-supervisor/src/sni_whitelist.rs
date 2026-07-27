@@ -27,11 +27,11 @@ pub struct WhitelistedSni {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SniCategory {
-    Banking,      // SHAPARAK, banking — most whitelisted
-    Government,   // gov.ir
+    Banking,        // SHAPARAK, banking — most whitelisted
+    Government,     // gov.ir
     VideoStreaming, // Aparat
-    ECommerce,    // Digikala, Torob
-    Cdn,          // ArvanCloud, etc
+    ECommerce,      // Digikala, Torob
+    Cdn,            // ArvanCloud, etc
     Edu,
     Other,
 }
@@ -48,16 +48,66 @@ impl SniWhitelist {
     #[must_use]
     pub fn with_iran_defaults() -> Self {
         let defaults = vec![
-            WhitelistedSni { sni: "www.shaparak.ir".into(), category: SniCategory::Banking, priority: 10, reachable: true },
-            WhitelistedSni { sni: "cbi.ir".into(), category: SniCategory::Banking, priority: 10, reachable: true },
-            WhitelistedSni { sni: "www.aparat.com".into(), category: SniCategory::VideoStreaming, priority: 20, reachable: true },
-            WhitelistedSni { sni: "www.digikala.com".into(), category: SniCategory::ECommerce, priority: 20, reachable: true },
-            WhitelistedSni { sni: "www.torob.com".into(), category: SniCategory::ECommerce, priority: 25, reachable: true },
-            WhitelistedSni { sni: "www.irib.ir".into(), category: SniCategory::Government, priority: 15, reachable: true },
-            WhitelistedSni { sni: "www.dolat.ir".into(), category: SniCategory::Government, priority: 15, reachable: true },
-            WhitelistedSni { sni: "arvancloud.ir".into(), category: SniCategory::Cdn, priority: 30, reachable: true },
-            WhitelistedSni { sni: "www.sharif.edu".into(), category: SniCategory::Edu, priority: 35, reachable: true },
-            WhitelistedSni { sni: "cdn.digikala.com".into(), category: SniCategory::Cdn, priority: 30, reachable: true },
+            WhitelistedSni {
+                sni: "www.shaparak.ir".into(),
+                category: SniCategory::Banking,
+                priority: 10,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "cbi.ir".into(),
+                category: SniCategory::Banking,
+                priority: 10,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "www.aparat.com".into(),
+                category: SniCategory::VideoStreaming,
+                priority: 20,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "www.digikala.com".into(),
+                category: SniCategory::ECommerce,
+                priority: 20,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "www.torob.com".into(),
+                category: SniCategory::ECommerce,
+                priority: 25,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "www.irib.ir".into(),
+                category: SniCategory::Government,
+                priority: 15,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "www.dolat.ir".into(),
+                category: SniCategory::Government,
+                priority: 15,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "arvancloud.ir".into(),
+                category: SniCategory::Cdn,
+                priority: 30,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "www.sharif.edu".into(),
+                category: SniCategory::Edu,
+                priority: 35,
+                reachable: true,
+            },
+            WhitelistedSni {
+                sni: "cdn.digikala.com".into(),
+                category: SniCategory::Cdn,
+                priority: 30,
+                reachable: true,
+            },
         ];
         let set: HashSet<String> = defaults.iter().map(|e| e.sni.clone()).collect();
         Self {

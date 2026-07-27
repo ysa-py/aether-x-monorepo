@@ -94,7 +94,7 @@ pub struct OooInjectionConfig {
 #[derive(Debug, Clone)]
 pub struct WindowScaleConfig {
     pub flow_key: u64,
-    pub scale_factor: u8,   // 0-14 per RFC
+    pub scale_factor: u8,     // 0-14 per RFC
     pub window_override: u16, // override advertised window (0 = no override)
     pub enabled: bool,
 }
@@ -135,7 +135,10 @@ impl EbpfMorphEngine {
     pub fn load(&mut self, iface: &str) -> anyhow::Result<()> {
         self.active = true;
         self.iface = Some(iface.to_string());
-        tracing::info!(iface, "mock eBPF morph engine (fragmentation+OOO+wscale) loaded");
+        tracing::info!(
+            iface,
+            "mock eBPF morph engine (fragmentation+OOO+wscale) loaded"
+        );
         Ok(())
     }
 
@@ -212,7 +215,12 @@ impl EbpfMorphEngine {
 
     /// Simulate OOO injection: produce an OOO segment that overlaps.
     #[must_use]
-    pub fn inject_ooo(&self, flow_key: u64, original_seq: u32, payload: &[u8]) -> Option<OooPacket> {
+    pub fn inject_ooo(
+        &self,
+        flow_key: u64,
+        original_seq: u32,
+        payload: &[u8],
+    ) -> Option<OooPacket> {
         let cfg = self.ooo_map.get(&flow_key)?;
         if !cfg.enabled {
             return None;

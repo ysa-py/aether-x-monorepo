@@ -85,11 +85,7 @@ impl InTlsTunnel {
         // Allocate the sequence before constructing the ID so concurrent
         // successful handshakes cannot reuse one even within the same clock tick.
         let sequence = self.total_sessions.fetch_add(1, Ordering::Relaxed);
-        let session_id = format!(
-            "intls-{:x}-{:x}",
-            epoch_nanos & 0xFFFF_FFFF_FFFF,
-            sequence,
-        );
+        let session_id = format!("intls-{:x}-{:x}", epoch_nanos & 0xFFFF_FFFF_FFFF, sequence,);
         let mut session = InTlsSession::new(&fronted.outer_sni, real_dest, &session_id);
         session.mark_established();
         {
@@ -102,19 +98,26 @@ impl InTlsTunnel {
     #[must_use]
     pub fn get_session(&self, session_id: &str) -> Option<InTlsSessionSnapshot> {
         let sessions = self.sessions.read();
-        sessions.iter().find(|s| s.session_id == session_id).map(|s| InTlsSessionSnapshot {
-            session_id: s.session_id.clone(),
-            outer_sni: s.outer_sni.clone(),
-            inner_sni: s.inner_sni.clone(),
-            established: s.established,
-            bytes_inner: s.bytes_inner.load(Ordering::Relaxed),
-            bytes_outer: s.bytes_outer.load(Ordering::Relaxed),
-        })
+        sessions
+            .iter()
+            .find(|s| s.session_id == session_id)
+            .map(|s| InTlsSessionSnapshot {
+                session_id: s.session_id.clone(),
+                outer_sni: s.outer_sni.clone(),
+                inner_sni: s.inner_sni.clone(),
+                established: s.established,
+                bytes_inner: s.bytes_inner.load(Ordering::Relaxed),
+                bytes_outer: s.bytes_outer.load(Ordering::Relaxed),
+            })
     }
 
     #[must_use]
     pub fn active_count(&self) -> usize {
-        self.sessions.read().iter().filter(|s| s.established).count()
+        self.sessions
+            .read()
+            .iter()
+            .filter(|s| s.established)
+            .count()
     }
 
     #[must_use]
