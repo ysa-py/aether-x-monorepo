@@ -93,20 +93,16 @@ hostnames, resolver addresses, or subscriber information.
 
 ## CI evidence versus deployment evidence
 
-The repository test suite uses actual loopback sockets:
+The repository test suite uses real loopback sockets for a TCP accept and a
+UDP DNS request/response with a matching pinned answer. It also parses the
+pinned test CA into the TLS verifier without permitting an insecure verifier.
 
-- a local TCP listener for connection-success measurement;
-- a local rustls server and pinned test CA for verified TLS success;
-- a local TCP listener which reads a ClientHello and closes, exercising the
-  observed TLS-EOF/truncation path; and
-- a local UDP DNS responder for a matching pinned answer.
-
-Those tests prove that this code sends/receives real local TCP, TLS, and UDP DNS
-traffic and that its resulting `BlackoutSignal` reaches the existing
-classifier. Mismatched DNS answers and TLS interruptions remain deployment
-checks until a platform-stable loopback fault fixture is added. None of these
-tests prove censorship detection on an Iranian carrier or on any public
-network.
+Those tests prove that the TCP/DNS measurement code exchanges real local
+traffic and that the TLS configuration requires a usable CA. Full TLS
+handshakes, TLS interruptions, and mismatched DNS answers remain authorized
+staging/deployment checks until a platform-stable loopback fault fixture is
+added. None of these tests prove censorship detection on an Iranian carrier or
+on any public network.
 
 Before enabling the monitor in a real deployment, perform an authorized
 staging drill:
