@@ -22,10 +22,15 @@ jobs:
     name: proto (buf lint + stubs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: bufbuild/buf-setup-action@v1
+      - uses: actions/checkout@v7.0.1
+      # bufbuild/buf-setup-action has no v2 release and its latest v1.50.0
+      # action still runs on Node 20. Install the verified npm Buf CLI through
+      # setup-node v7 instead, so this job has no forced-Node-24 warning.
+      - uses: actions/setup-node@v7.0.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          node-version: "24"
+      - name: Install Buf CLI
+        run: npm install --global @bufbuild/buf@1.72.0
       - name: buf lint
         working-directory: api/proto
         run: buf lint --error-format=json
@@ -43,7 +48,7 @@ jobs:
     name: rust (fmt + clippy + test + fuzz build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -70,8 +75,8 @@ jobs:
       run:
         working-directory: control-plane
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: control-plane/go.sum
@@ -101,8 +106,8 @@ jobs:
       run:
         working-directory: aether-x-dashboard
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -119,7 +124,7 @@ jobs:
         run: npx playwright install --with-deps chromium firefox
       - name: Playwright E2E
         run: npm run test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: playwright-report
@@ -131,7 +136,7 @@ jobs:
     name: k6 (REST + SSE load)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Install k6
         run: |
           curl -sL https://github.com/grafana/k6/releases/download/v0.55.0/k6-v0.55.0-linux-amd64.tar.gz | tar -xz
@@ -151,13 +156,13 @@ jobs:
     name: deploy (docker build + helm render)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.2.0
 
       # Build every image from the MONOREPO ROOT, which is the context each
       # Dockerfile documents. Load into the local daemon, do not push.
       - name: Build control-plane image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: deploy/docker/control-plane.Dockerfile
@@ -165,7 +170,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build core-supervisor image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: deploy/docker/core-supervisor.Dockerfile
@@ -173,7 +178,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build antiforgery-server image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: deploy/docker/antiforgery-server.Dockerfile
@@ -181,7 +186,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build dashboard image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: deploy/docker/dashboard.Dockerfile
@@ -190,7 +195,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5.0.1
       - name: helm lint
         run: helm lint deploy/helm/aether-x
       - name: helm template renders valid YAML
