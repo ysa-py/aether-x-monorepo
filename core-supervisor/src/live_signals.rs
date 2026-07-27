@@ -1023,7 +1023,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "diagnostic isolation; removed before merge"]
     async fn real_tls_interruption_endpoint_and_dns_mismatch_feed_the_existing_classifier() {
         let international = start_tcp_acceptor(2).await;
         let second_international = start_tcp_acceptor(2).await;
