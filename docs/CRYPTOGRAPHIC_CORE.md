@@ -59,10 +59,10 @@ is not a remote deployment, carrier, or mobile-client test.
 - **HKDF-SHA-256** for a 32-byte session key;
 - zeroizing key/secret buffers (`x25519-dalek` and `zeroize`).
 
-The module has the RFC 7748 X25519 test vector and a two-party agreement test.
-It is a key-agreement primitive only: it is not yet a TLS, proxy, or ECH
-protocol integration, so it must not be described as a completed transport
-handshake.
+The module has the RFC 7748 X25519 test vector, the RFC 5869 HKDF-SHA-256
+vector, and a two-party agreement test. It is a key-agreement primitive only:
+it is not yet a TLS, proxy, or ECH protocol integration, so it must not be
+described as a completed transport handshake.
 
 ### ML-KEM-768 and ECH status: `NotConfigured`
 
