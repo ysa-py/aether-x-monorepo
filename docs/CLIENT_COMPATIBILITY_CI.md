@@ -4,6 +4,13 @@ A serializer test is not client compatibility. This contract defines the narrow
 claim made only after the CI test
 `TestExternalClientParsersAcceptGeneratedSubscriptionConfigs` passes.
 
+## Verification record
+
+[CI run 30266875057](https://github.com/ysa-py/aether-x-monorepo/actions/runs/30266875057)
+passed the Go gate containing this test, plus every other repository gate. The
+record proves parser acceptance for the exact pinned binaries and one generated
+VLESS-over-WebSocket fixture only.
+
 ## Pinned parser binaries
 
 | Client/core | Pinned release | CI action | Claim after a green CI run |

@@ -36,13 +36,16 @@ and its hermetic tests, not reachability through a real network.
    arbitrary subscriber traffic.
 4. The subscription publisher is a real Go HTTP/catalog-rendering path when an
    operator enables it and supplies a valid catalog. It is disabled in the
-   shipped Northflank manifest (`deploy/northflank/northflank.yaml:306-312`) and
-   has no external-client parser/import test.
-5. **No named standard client is CI-proven compatible today.** The repository
-   proves that it serializes base64 URI lists, YAML, and JSON; it does not run
-   sing-box, Xray, Mihomo/Clash Meta, or any mobile/desktop client against that
-   output. “Known User-Agent”, a serializer name, a URI template, and a catalog
-   allow-list are not compatibility evidence.
+   shipped Northflank manifest (`deploy/northflank/northflank.yaml:306-312`).
+   A later CI fixture validates one generated VLESS-over-WebSocket config with
+   pinned sing-box and Mihomo parser binaries; app import and connection remain
+   separate, unproven layers.
+5. **Two pinned parser binaries are now CI-proven for one generated fixture:**
+   sing-box `v1.13.14` accepts the emitted JSON and Mihomo `v1.19.29` accepts
+   the emitted YAML in CI run `30266875057`. This is parser acceptance only;
+   it does not prove an app import, a proxy connection, or censorship
+   resistance. Xray-family VLESS remains structural URI validation because
+   xray-core has no CLI subscription-URI importer.
 6. At full international isolation, software cannot create a missing external
    route. The only honest service level is local/domestic exchange or queued
    work *if* a separately deployed local/OOB transport exists; it is not
@@ -159,31 +162,25 @@ client or establishes a proxy session.
 
 ### Exact compatibility status today
 
-**Answer: zero named standard clients are proven compatible by this repository's
-CI evidence today.** The following names have serializer/UA/allow-list code,
-but no pinned client binary/app import test, no parser validation by that
-project, and no successful controlled connection test:
+CI run [30266875057](https://github.com/ysa-py/aether-x-monorepo/actions/runs/30266875057)
+executes `TestExternalClientParsersAcceptGeneratedSubscriptionConfigs` inside
+the existing Go CI gate. The test downloads pinned upstream release assets,
+verifies their GitHub-published SHA-256 values, writes bytes generated directly
+by `BuildSubscriptionBodyEx` / `BuildProxyLink`, and invokes each native parser.
+The narrow result is documented in `docs/CLIENT_COMPATIBILITY_CI.md`.
 
-| Product/core | What the repo does | Why it is **not confirmed** |
+| Product/core | Current proof | Precise boundary |
 | --- | --- | --- |
-| **sing-box** | Selects `singbox` JSON for `sing-box`/`sfa` user agents (`subendpoint/endpoint.go:62-64`) and labels `sing-box` as a catalog core (`catalog.go:334-340`). | No `sing-box check`, import, or connection test is run; output is only decoded by Go JSON. |
-| **Xray-core** | Treats V2Ray/Hiddify UAs as `xray-core` (`subendpoint/optimized.go:96-99`) and can emit standard URI links. | Xray-core is a core, not proof that it fetches/understands this subscription endpoint; there is no generated native Xray JSON, running Xray process in CI, or import test. |
-| **Clash Meta / Mihomo** | Selects YAML for `clash`/`mihomo` UAs (`endpoint.go:60-61`) and has YAML field emitters including `xhttp-opts` (`config_builder.go:452-492`). | No Mihomo/Clash Meta parser or live connection test. The generated YAML being parseable by generic `yaml.v3` is insufficient. |
-| **NekoBox** | Selects sing-box JSON for `nekobox` (`endpoint.go:62-64`) and recognizes it in the internal allow-list. | No NekoBox application import test. |
-| **Shadowrocket** | Recognizes the UA and falls back to the base64 serializer; an internal core label exists (`endpoint.go:42`, `optimized.go:94-95`). | No app import/connection test. |
-| **v2rayNG, Hiddify, Karing, FlClash/ClashX, v2RayTun, Streisand** | Some are recognized by UA or appear as convenience URI templates. | Templates/UA recognition do not execute in the external app. The client manifest now marks every entry `verify-before-ship` (`control-plane/clients_schema.json:5-94`). |
+| **sing-box `v1.13.14`** | **CI parser-proven**: `sing-box check -c` accepted generated VLESS-over-WebSocket JSON. | Does not prove a connection, an app import, server compatibility, or other protocols/transports. |
+| **Mihomo `v1.19.29`** | **CI parser-proven**: `mihomo -t -f` accepted generated VLESS-over-WebSocket YAML. | This is Mihomo/Clash Meta parser acceptance only—not FlClash, ClashX, or a live proxy session. |
+| **Xray-family VLESS URI** | **Structurally serialized**: CI validates the generated URI scheme, UUID, endpoint, TLS, WebSocket, SNI, host, ALPN, path, and remark fields. | Xray-core has no CLI which imports a subscription URI. `xray run -test` validates native JSON, not this URI, so it is not parser- or connection-proven. |
+| **NekoBox, Shadowrocket, v2rayNG, Hiddify, Karing, FlClash/ClashX, v2RayTun, Streisand** | **Structurally serialized / launcher metadata only.** | No pinned application import or connection test exists. |
 
-The older configuration had `"confirmed"` labels in that JSON, but the file is
-not an external test record and its schema is not the same as the hard-coded
-`clientengine.Default()` list. This change removes those unsupported labels;
-`builtinClients` now documents that launch templates are not compatibility
-attestations (`control-plane/internal/clientengine/scheme.go:161-175`).
-
-**Practical no-custom-client conclusion:** the project has a reasonable
-subscription-*format* path and does not require a custom client in principle,
-but operators must not promise support for any specific app today. A standard
-client becomes supported only after the acceptance gate below passes for the
-pinned client version and the exact catalog profile being published.
+The client manifest records sing-box as `ci-parser-validated`; the combined
+Clash/Mihomo/FlClash entry remains `verify-before-ship` because this CI proof
+covers Mihomo only. A standard client becomes supported for a published profile
+only after the pinned client/version and exact profile pass the appropriate
+parser and authorized connection tests.
 
 ## Blackout Isolation Bounds: operational answer
 
