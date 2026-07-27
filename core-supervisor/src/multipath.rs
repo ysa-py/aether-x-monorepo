@@ -23,8 +23,9 @@
 //!     inverse RTT). N parallel slow streams approximate N× throughput — the
 //!     honest answer to "stay connected *and* fast" on last-resort paths.
 //!
-//! Both are pure coordination over the existing [`crate::tor::Transport`] set;
-//! they add no new wire protocol and remove no capability.
+//! Both coordinate actual `Transport::connect` results. An unconfigured or
+//! failed transport is recorded as a failed attempt and is never given a
+//! synthetic RTT or included in a bond.
 
 use crate::tor::{Transport, TransportConnection};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -39,6 +40,8 @@ pub struct RaceAttempt {
     pub name: String,
     pub established: bool,
     pub rtt_ms: u32,
+    /// The real connect error when no connection was established.
+    pub error: Option<String>,
 }
 
 impl From<&TransportConnection> for RaceAttempt {
@@ -47,6 +50,7 @@ impl From<&TransportConnection> for RaceAttempt {
             name: c.transport_name.clone(),
             established: c.established,
             rtt_ms: c.rtt_ms,
+            error: None,
         }
     }
 }
@@ -74,23 +78,29 @@ impl MultipathRacer {
     /// user gets the best *working* path in ~one round-trip instead of waiting
     /// through a serial fallback chain.
     pub fn race(transports: &[Arc<dyn Transport>], timeout: Duration) -> RaceOutcome {
-        let (tx, rx) = mpsc::channel::<TransportConnection>();
+        let (tx, rx) = mpsc::channel::<(
+            String,
+            Result<TransportConnection, crate::tor::ConnectError>,
+        )>();
         let handles: Vec<_> = transports
             .iter()
-            .map(|t| {
-                let t = Arc::clone(t);
+            .map(|transport| {
+                let transport = Arc::clone(transport);
                 let tx = tx.clone();
                 thread::spawn(move || {
-                    let conn = t.connect();
-                    // send errors only if the receiver was dropped (race over).
-                    let _ = tx.send(conn);
+                    let name = transport.name().to_string();
+                    // `connect` opens a real configured socket or returns the
+                    // real error; the race records failure rather than inventing
+                    // an RTT or a successful connection.
+                    let _ = tx.send((name, transport.connect()));
                 })
             })
             .collect();
         drop(tx);
 
         let deadline = Instant::now() + timeout;
-        let mut connections: Vec<TransportConnection> = Vec::new();
+        let mut connections = Vec::new();
+        let mut attempts = Vec::new();
         loop {
             let remaining = deadline
                 .checked_duration_since(Instant::now())
@@ -99,34 +109,42 @@ impl MultipathRacer {
                 break;
             }
             match rx.recv_timeout(remaining) {
-                Ok(c) => connections.push(c),
+                Ok((name, Ok(connection))) => {
+                    attempts.push(RaceAttempt::from(&connection));
+                    connections.push(connection);
+                }
+                Ok((name, Err(error))) => attempts.push(RaceAttempt {
+                    name,
+                    established: false,
+                    rtt_ms: 0,
+                    error: Some(error.to_string()),
+                }),
                 Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
             }
         }
         // Reap worker threads so none outlive the call.
-        for h in handles {
-            let _ = h.join();
+        for handle in handles {
+            let _ = handle.join();
         }
 
-        // Winner = lowest-RTT established connection.
         let winner = connections
             .iter()
-            .filter(|c| c.established)
-            .min_by_key(|c| c.rtt_ms)
+            .min_by_key(|connection| connection.rtt_ms)
             .cloned();
 
-        let mut attempts: Vec<RaceAttempt> = connections.iter().map(RaceAttempt::from).collect();
-        // Any transport that never reported (timed out) is recorded as a
-        // not-established attempt so callers see the full picture. Own the
-        // reported names so we can push into `attempts` afterwards.
-        let reported: std::collections::HashSet<String> =
-            attempts.iter().map(|a| a.name.clone()).collect();
-        for t in transports {
-            if !reported.contains(t.name()) {
+        // Any transport that never reported by the shared deadline is explicitly
+        // recorded as a timeout, not as a fabricated 50ms connection.
+        let reported: std::collections::HashSet<String> = attempts
+            .iter()
+            .map(|attempt| attempt.name.clone())
+            .collect();
+        for transport in transports {
+            if !reported.contains(transport.name()) {
                 attempts.push(RaceAttempt {
-                    name: t.name().to_string(),
+                    name: transport.name().to_string(),
                     established: false,
                     rtt_ms: 0,
+                    error: Some(format!("race deadline exceeded after {timeout:?}")),
                 });
             }
         }
@@ -166,7 +184,12 @@ impl MultipathBond {
             if !t.is_available() {
                 continue;
             }
-            let w = weight_for_rtt(t.connect().rtt_ms);
+            let Ok(connection) = t.connect() else {
+                // A bond may contain only transports that completed a real
+                // connection; failures stay visible through the racer path.
+                continue;
+            };
+            let w = weight_for_rtt(connection.rtt_ms);
             let idx = members.len();
             members.push(Arc::clone(t));
             weights.push(w);
@@ -222,8 +245,6 @@ impl MultipathBond {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dns_tunnel::{DnsTunnelTransport, DnsTunnelVariant};
-    use crate::tor::{Conjure, Meek, Obfs4, Snowflake, WebTunnel};
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
 
@@ -245,7 +266,7 @@ mod tests {
         }
     }
     impl Transport for ProbeTransport {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             self.name
         }
         fn priority(&self) -> u8 {
@@ -254,12 +275,18 @@ mod tests {
         fn is_available(&self) -> bool {
             self.up.load(Ordering::SeqCst)
         }
-        fn connect(&self) -> TransportConnection {
-            TransportConnection {
-                transport_name: self.name.into(),
-                established: self.is_available(),
-                rtt_ms: self.rtt,
+        fn connect(&self) -> Result<TransportConnection, crate::tor::ConnectError> {
+            if !self.is_available() {
+                return Err(crate::tor::ConnectError::NotConfigured {
+                    transport: self.name.to_string(),
+                });
             }
+            Ok(TransportConnection {
+                transport_name: self.name.into(),
+                established: true,
+                rtt_ms: self.rtt,
+                peer: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+            })
         }
     }
 
@@ -298,9 +325,9 @@ mod tests {
     #[test]
     fn bond_aggregates_multiple_paths() {
         let transports: Vec<Arc<dyn Transport>> = vec![
-            Arc::new(WebTunnel::new("cdn.example")), // rtt 50 -> weight 10
-            Arc::new(Snowflake::new(vec![])),        // rtt 50 -> weight 10
-            Arc::new(Obfs4::new("n")),               // rtt 50 -> weight 10
+            Arc::new(ProbeTransport::new("one", 50, true)),
+            Arc::new(ProbeTransport::new("two", 50, true)),
+            Arc::new(ProbeTransport::new("three", 50, true)),
         ];
         let bond = MultipathBond::from_available(&transports);
         assert_eq!(bond.member_count(), 3);
@@ -316,14 +343,12 @@ mod tests {
 
     #[test]
     fn bond_weights_faster_transport_more_heavily() {
-        // fast (rtt 50, weight 10) vs slow DNS tunnel (rtt 800, weight 1).
-        let dns = Arc::new(DnsTunnelTransport::spawn(
-            DnsTunnelVariant::MasterDnsVpn,
-            "127.0.0.1:18000",
-        ));
-        dns.mark_healthy(true);
-        let transports: Vec<Arc<dyn Transport>> =
-            vec![Arc::new(Meek::new("az")), Arc::new(Conjure::new("c")), dns];
+        // The weights are calculated over established connection measurements.
+        let transports: Vec<Arc<dyn Transport>> = vec![
+            Arc::new(ProbeTransport::new("fast-one", 50, true)),
+            Arc::new(ProbeTransport::new("fast-two", 50, true)),
+            Arc::new(ProbeTransport::new("slow", 800, true)),
+        ];
         let bond = MultipathBond::from_available(&transports);
         assert_eq!(bond.member_count(), 3);
         // Over a long round-robin, the fast PTs dominate the slow tunnel.
@@ -332,8 +357,8 @@ mod tests {
             let n = bond.next().unwrap().name().to_string();
             *counts.entry(n).or_insert(0) += 1;
         }
-        let pt = counts["meek"];
-        let tunnel = counts["dns-tunnel-masterdns"];
+        let pt = counts["fast-one"];
+        let tunnel = counts["slow"];
         assert!(
             pt > tunnel,
             "fast PT ({pt}) should beat DNS tunnel ({tunnel})"
@@ -352,24 +377,17 @@ mod tests {
     fn race_then_bond_end_to_end() {
         // The composed strategy: race to find working paths fast, then bond
         // them for throughput.
-        let dns = Arc::new(DnsTunnelTransport::spawn(
-            DnsTunnelVariant::VayDns,
-            "127.0.0.1:18001",
-        ));
-        dns.mark_healthy(true);
         let transports: Vec<Arc<dyn Transport>> = vec![
-            Arc::new(WebTunnel::new("cdn")),
-            Arc::new(Snowflake::new(vec![])),
-            dns,
+            Arc::new(ProbeTransport::new("fast-one", 40, true)),
+            Arc::new(ProbeTransport::new("fast-two", 60, true)),
+            Arc::new(ProbeTransport::new("slow", 800, true)),
         ];
         let raced = MultipathRacer::race(&transports, Duration::from_millis(500));
-        // Winner is a fast PT (rtt 50), not the DNS tunnel (800).
-        assert_eq!(raced.winner.as_ref().unwrap().rtt_ms, 50);
+        // Winner is the fastest successful measured connection.
+        assert_eq!(raced.winner.as_ref().unwrap().rtt_ms, 40);
         // Bond all available for aggregate throughput.
         let bond = MultipathBond::from_available(&transports);
         assert!(bond.aggregate_multiplier() > 1.0);
-        assert!(bond
-            .member_names()
-            .contains(&"dns-tunnel-vaydns-doh".to_string()));
+        assert!(bond.member_names().contains(&"slow".to_string()));
     }
 }

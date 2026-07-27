@@ -12,7 +12,7 @@
 //! when nothing above it is available, i.e. an actual connectivity blackout
 //! where DNS queries still ride a surviving path.
 
-use crate::tor::{Transport, TransportConnection};
+use crate::tor::Transport;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Which upstream DNS-tunnel project a [`DnsTunnelTransport`] wraps.
@@ -107,7 +107,7 @@ impl DnsTunnelTransport {
 }
 
 impl Transport for DnsTunnelTransport {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         match self.variant {
             DnsTunnelVariant::MasterDnsVpn => "dns-tunnel-masterdns",
             DnsTunnelVariant::VayDns => "dns-tunnel-vaydns-doh",
@@ -124,17 +124,6 @@ impl Transport for DnsTunnelTransport {
 
     fn is_available(&self) -> bool {
         self.healthy.load(Ordering::SeqCst)
-    }
-
-    // Overrides the trait's default mock: real DNS-tunnel RTT is high (~hundreds
-    // of ms through a filtered resolver chain), so connections surface an honest
-    // 800 ms estimate rather than the 50 ms default.
-    fn connect(&self) -> TransportConnection {
-        TransportConnection {
-            transport_name: self.name().to_string(),
-            established: self.is_available(),
-            rtt_ms: 800,
-        }
     }
 }
 
@@ -156,20 +145,24 @@ mod tests {
     }
 
     #[test]
-    fn health_gates_availability_and_connect() {
+    fn health_state_is_not_fabricated_into_a_connection() {
         let t = DnsTunnelTransport::spawn(DnsTunnelVariant::MasterDnsVpn, "127.0.0.1:18000");
         assert!(!t.is_available());
         assert!(!t.is_spawned());
-        let conn = t.connect();
-        assert!(!conn.established);
-        assert_eq!(conn.rtt_ms, 800);
-        assert_eq!(conn.transport_name, "dns-tunnel-masterdns");
+        assert!(matches!(
+            t.connect(),
+            Err(crate::tor::ConnectError::NotConfigured { .. })
+        ));
 
         t.mark_spawned(true);
         t.mark_healthy(true);
         assert!(t.is_spawned());
         assert!(t.is_available());
-        assert!(t.connect().established);
+        // The lifecycle state alone cannot claim a socket handshake or static RTT.
+        assert!(matches!(
+            t.connect(),
+            Err(crate::tor::ConnectError::NotConfigured { .. })
+        ));
 
         t.mark_healthy(false);
         assert!(!t.is_available());

@@ -338,8 +338,10 @@ fn enterprise_engine_end_to_end_blackout() {
         res_severed.blackout_level,
         aether_supervisor::blackout::IsolationLevel::RoutingSevered
     );
-    assert!(res_severed.race_winner.is_some());
-    assert!(res_severed.throughput_multiplier >= 1.0);
+    // No configured real endpoint exists in this fixture, so the transport race
+    // must not invent a winner or a throughput measurement.
+    assert!(res_severed.race_winner.is_none());
+    assert!(res_severed.throughput_multiplier.abs() < f64::EPSILON);
 
     // Full isolation: bound reached, honest reporting (never fake connected)
     let res_full = engine.tick(&full_isolation_signal(), vec![]);

@@ -6,7 +6,7 @@
 //! option, not because it outperforms the DNS tunnels or pluggable transports
 //! above it.
 
-use crate::tor::{Transport, TransportConnection};
+use crate::tor::Transport;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// SSH SOCKS tunnel transport. In production, spawns `ssh -D <addr>` and probes
@@ -53,7 +53,7 @@ impl SshTunnelTransport {
 }
 
 impl Transport for SshTunnelTransport {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "ssh-socks-tunnel"
     }
 
@@ -64,14 +64,6 @@ impl Transport for SshTunnelTransport {
 
     fn is_available(&self) -> bool {
         self.healthy.load(Ordering::SeqCst)
-    }
-
-    fn connect(&self) -> TransportConnection {
-        TransportConnection {
-            transport_name: self.name().to_string(),
-            established: self.is_available(),
-            rtt_ms: 600, // SSH tunnel RTT is high but lower than DNS tunnels.
-        }
     }
 }
 
@@ -87,7 +79,7 @@ mod tests {
     }
 
     #[test]
-    fn health_gates_availability() {
+    fn health_state_is_not_fabricated_into_a_connection() {
         let t = SshTunnelTransport::new("127.0.0.1:18003");
         assert!(!t.is_available());
         assert!(!t.is_spawned());
@@ -95,7 +87,10 @@ mod tests {
         t.mark_healthy(true);
         assert!(t.is_spawned());
         assert!(t.is_available());
-        assert!(t.connect().established);
-        assert_eq!(t.connect().rtt_ms, 600);
+        // A lifecycle flag is not proof that a SOCKS handshake completed.
+        assert!(matches!(
+            t.connect(),
+            Err(crate::tor::ConnectError::NotConfigured { .. })
+        ));
     }
 }

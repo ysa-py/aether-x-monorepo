@@ -270,8 +270,10 @@ impl SeamlessController {
             if name == active || already.contains(&name) || !t.is_available() {
                 continue;
             }
-            let conn: TransportConnection = t.connect();
-            // Honesty: only a real established handshake counts as warm.
+            let Ok(conn): Result<TransportConnection, _> = t.connect() else {
+                continue;
+            };
+            // Only a successfully measured connection counts as warm.
             if !conn.established {
                 continue;
             }
@@ -354,7 +356,9 @@ impl SeamlessController {
             if t.name() == active || !t.is_available() {
                 continue;
             }
-            let conn = t.connect();
+            let Ok(conn) = t.connect() else {
+                continue;
+            };
             if !conn.established {
                 continue;
             }
@@ -456,7 +460,7 @@ mod tests {
     }
 
     impl Transport for FakeTransport {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             self.name
         }
         fn priority(&self) -> u8 {
@@ -465,13 +469,19 @@ mod tests {
         fn is_available(&self) -> bool {
             self.available.load(Ordering::SeqCst)
         }
-        fn connect(&self) -> TransportConnection {
+        fn connect(&self) -> Result<TransportConnection, crate::tor::ConnectError> {
             self.connects.fetch_add(1, Ordering::SeqCst);
-            TransportConnection {
-                transport_name: self.name.to_string(),
-                established: self.available.load(Ordering::SeqCst),
-                rtt_ms: self.rtt_ms,
+            if !self.available.load(Ordering::SeqCst) {
+                return Err(crate::tor::ConnectError::NotConfigured {
+                    transport: self.name.to_string(),
+                });
             }
+            Ok(TransportConnection {
+                transport_name: self.name.to_string(),
+                established: true,
+                rtt_ms: self.rtt_ms,
+                peer: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+            })
         }
     }
 

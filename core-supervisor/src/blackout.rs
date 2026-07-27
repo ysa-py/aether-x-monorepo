@@ -303,9 +303,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    fn healthy_dns_only_controller() -> BlackoutController {
-        // Registry with ONLY a healthy MasterDnsVPN tunnel, so escalation
-        // deterministically promotes the DNS tunnel (not a default-available PT).
+    fn configured_dns_lifecycle_controller() -> BlackoutController {
+        // Registry with a lifecycle-marked DNS tunnel but no real configured
+        // connection endpoint. The controller must not promote it solely from
+        // an in-memory health flag.
         let reg = TransportRegistry::new();
         let tunnel = Arc::new(DnsTunnelTransport::spawn(
             DnsTunnelVariant::MasterDnsVpn,
@@ -395,7 +396,7 @@ mod tests {
 
     #[test]
     fn controller_normal_no_escalation_https_morph() {
-        let mut c = healthy_dns_only_controller();
+        let mut c = configured_dns_lifecycle_controller();
         let a = c.react(&BlackoutSignal {
             international_ip_severed: false,
             tcp_rst_rate: 0.1,
@@ -411,8 +412,8 @@ mod tests {
     }
 
     #[test]
-    fn controller_routing_severed_promotes_dns_tunnel_and_morphs_banking() {
-        let mut c = healthy_dns_only_controller();
+    fn controller_routing_severed_refuses_unconnected_dns_tunnel_and_morphs_banking() {
+        let mut c = configured_dns_lifecycle_controller();
         let a = c.react(&BlackoutSignal {
             international_ip_severed: true,
             dns_resolves_international: true,
@@ -422,22 +423,15 @@ mod tests {
             domestic_intranet_up: true,
         });
         assert_eq!(a.level, IsolationLevel::RoutingSevered);
-        assert_eq!(
-            a.promoted_transport.as_deref(),
-            Some("dns-tunnel-masterdns")
-        );
+        assert!(a.promoted_transport.is_none());
         assert_eq!(a.morph_profile, "shaparak-banking");
         assert!(!a.bound_reached);
-        // The user does not feel the cut: the bridge swapped to the DNS tunnel.
-        assert_eq!(
-            c.resilience().bridge().active().name,
-            "dns-tunnel-masterdns"
-        );
+        assert_eq!(c.resilience().bridge().active().name, "primary");
     }
 
     #[test]
     fn controller_full_isolation_reports_the_bound() {
-        let mut c = healthy_dns_only_controller();
+        let mut c = configured_dns_lifecycle_controller();
         let a = c.react(&BlackoutSignal {
             international_ip_severed: true,
             dns_resolves_international: false,
@@ -485,15 +479,16 @@ mod tests {
             domestic_intranet_up: true,
         });
         assert_eq!(a2.level, IsolationLevel::RoutingSevered);
-        // Full tier has WebTunnel available (priority 20) before the DNS tunnels.
-        assert_eq!(a2.promoted_transport.as_deref(), Some("webtunnel"));
+        // The default tier has no configured real endpoint, so classification
+        // must not promote a conceptual transport merely from static eligibility.
+        assert!(a2.promoted_transport.is_none());
     }
 
     #[test]
-    fn react_fast_races_and_bonds_at_routing_severed() {
-        // Full tier: WebTunnel/Snowflake/etc. (PTs, rtt 50) are available by
-        // default; DNS tunnels are not. Racing must pick a fast PT, and the
-        // bond must aggregate every available path for throughput.
+    fn react_fast_does_not_fabricate_unconfigured_connections() {
+        // The full tier registers conceptual transports, but none has an
+        // operator-configured endpoint in this test. A race must report no
+        // winner/bond instead of assigning a static RTT or fake throughput.
         let mut c = BlackoutController::with_full_tier("primary-core");
         let action = c.react_fast(&BlackoutSignal {
             international_ip_severed: true,
@@ -504,14 +499,11 @@ mod tests {
             domestic_intranet_up: true,
         });
         assert_eq!(action.base.level, IsolationLevel::RoutingSevered);
-        // Race winner is a fast pluggable transport (rtt 50), not a DNS tunnel.
-        let winner = action.race_winner.expect("race produced a winner");
-        assert!(["webtunnel", "snowflake", "obfs4", "meek", "conjure"].contains(&winner.as_str()));
-        // Bonded paths = the available tier transports; multiplier > 1.
-        assert!(action.bonded_paths.len() >= 2, "should bond multiple paths");
+        assert!(action.race_winner.is_none());
+        assert!(action.bonded_paths.is_empty());
         assert!(
-            action.throughput_multiplier > 1.0,
-            "bonding must multiply throughput"
+            action.throughput_multiplier.abs() < f64::EPSILON,
+            "no measured connections means no claimed throughput"
         );
     }
 

@@ -23,6 +23,7 @@ use aether_supervisor::{
         Aes256GcmSpoolSealer, OverflowPolicy, QueueLimits, SpoolSealer, StoreAndForward,
     },
     telemetry::Collector,
+    tor::{ConnectOptions, TcpConnectTarget, TcpEndpointTransport, Transport},
     CoreSupervisor,
 };
 
@@ -117,6 +118,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let supervisor = Arc::new(CoreSupervisor::with_default_adapters());
+
+    // A real TCP connection path is opt-in only when an operator supplies both
+    // target and timeout. It has no fabricated fallback: a configured probe
+    // opens a real socket and logs the real result/error from `Transport::connect`.
+    if let Some(probe) = transport_probe_from_environment()? {
+        tokio::task::spawn_blocking(move || match probe.connect() {
+            Ok(connection) => tracing::info!(
+                transport = %connection.transport_name,
+                peer = %connection.peer,
+                rtt_ms = connection.rtt_ms,
+                "configured real TCP transport probe connected"
+            ),
+            Err(error) => {
+                tracing::warn!(error = %error, "configured real TCP transport probe failed")
+            }
+        });
+    }
 
     if let Some(source) = live_signal_source {
         tokio::spawn(run_live_signal_monitor(source));
@@ -252,6 +270,38 @@ fn env_usize(key: &str, default: usize) -> usize {
         },
         Err(_) => default,
     }
+}
+
+/// Build a production-reachable TCP transport probe only from explicit operator
+/// configuration. There is intentionally no default target or timeout.
+///
+/// * `AETHER_TRANSPORT_PROBE_TARGET` — `host:port`, `IP:port`, or `[IPv6]:port`.
+/// * `AETHER_TRANSPORT_PROBE_TIMEOUT_MS` — positive millisecond timeout.
+fn transport_probe_from_environment(
+) -> Result<Option<TcpEndpointTransport>, Box<dyn std::error::Error>> {
+    let target = match std::env::var("AETHER_TRANSPORT_PROBE_TARGET") {
+        Ok(value) if !value.trim().is_empty() => TcpConnectTarget::parse(value.trim())?,
+        _ => return Ok(None),
+    };
+    let raw_timeout = std::env::var("AETHER_TRANSPORT_PROBE_TIMEOUT_MS").map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "AETHER_TRANSPORT_PROBE_TIMEOUT_MS is required when AETHER_TRANSPORT_PROBE_TARGET is set",
+        )
+    })?;
+    let timeout_ms = raw_timeout.parse::<u64>().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("AETHER_TRANSPORT_PROBE_TIMEOUT_MS must be a positive integer: {error}"),
+        )
+    })?;
+    let options = ConnectOptions::new(std::time::Duration::from_millis(timeout_ms))?;
+    Ok(Some(TcpEndpointTransport::new(
+        "configured-tcp-probe",
+        1,
+        target,
+        options,
+    )))
 }
 
 fn supervisor_addr_from_environment() -> Result<SocketAddr, std::io::Error> {

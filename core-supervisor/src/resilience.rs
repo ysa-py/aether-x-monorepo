@@ -92,21 +92,37 @@ impl ResilienceController {
         let Decision::Escalate = decision else {
             return EscalationOutcome::NoAction;
         };
-        let Some(best) = self.registry.select_best() else {
-            return EscalationOutcome::NoLastResortAvailable;
-        };
-        let name = best.name().to_string();
-        self.bridge.add_standby(TransportHandle {
-            name: name.clone(),
-            established_at: Instant::now(),
-            bytes_forwarded: 0,
-        });
-        if self.bridge.promote(&name) {
-            tracing::warn!(transport = %name, "resilience: escalated to last-resort transport");
-            EscalationOutcome::EscalatedTo(name)
-        } else {
-            EscalationOutcome::NoLastResortAvailable
+        // Eligibility alone is not health. Every candidate must complete the
+        // real `Transport::connect` path before it can be promoted.
+        for candidate in self.registry.snapshot() {
+            if !candidate.is_available() {
+                continue;
+            }
+            let connection = match candidate.connect() {
+                Ok(connection) => connection,
+                Err(error) => {
+                    tracing::warn!(
+                        transport = %candidate.name(),
+                        error = %error,
+                        "resilience candidate failed real connection; trying next candidate"
+                    );
+                    continue;
+                }
+            };
+            let name = connection.transport_name;
+            self.bridge.add_standby(TransportHandle {
+                name: name.clone(),
+                established_at: Instant::now(),
+                // A successful TCP connect is real liveness evidence, but no
+                // forwarded application payload has been observed yet.
+                bytes_forwarded: 0,
+            });
+            if self.bridge.promote(&name) {
+                tracing::warn!(transport = %name, rtt_ms = connection.rtt_ms, "resilience escalated after real connection");
+                return EscalationOutcome::EscalatedTo(name);
+            }
         }
+        EscalationOutcome::NoLastResortAvailable
     }
 
     /// Borrow the registry (introspection / metrics).
@@ -140,7 +156,9 @@ impl ResilienceController {
 mod tests {
     use super::*;
     use crate::policy::Decision;
-    use crate::tor::{Transport, TransportRegistry};
+    use crate::tor::{
+        ConnectOptions, TcpConnectTarget, TcpEndpointTransport, Transport, TransportRegistry,
+    };
 
     fn controller_with_only_dns(
         dns: DnsTunnelVariant,
@@ -160,18 +178,42 @@ mod tests {
         (ResilienceController::new(reg, bridge), tunnel)
     }
 
+    fn controller_with_real_tcp() -> (ResilienceController, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let acceptor = std::thread::spawn(move || {
+            let _ = listener.accept();
+        });
+        let reg = TransportRegistry::new();
+        reg.register(Arc::new(TcpEndpointTransport::new(
+            "real-loopback",
+            1,
+            TcpConnectTarget::SocketAddr(address),
+            ConnectOptions::new(std::time::Duration::from_secs(1)).unwrap(),
+        )));
+        let bridge = FailoverBridge::new(
+            TransportHandle {
+                name: "primary".into(),
+                established_at: Instant::now(),
+                bytes_forwarded: 0,
+            },
+            Vec::new(),
+        );
+        (ResilienceController::new(reg, bridge), acceptor)
+    }
+
     #[test]
-    fn escalate_promotes_available_last_resort() {
-        let (ctrl, tunnel) = controller_with_only_dns(DnsTunnelVariant::MasterDnsVpn);
-        tunnel.mark_healthy(true);
+    fn escalate_promotes_only_after_a_real_tcp_connection() {
+        let (ctrl, acceptor) = controller_with_real_tcp();
 
         let outcome = ctrl.apply_decision(&Decision::Escalate);
         assert_eq!(
             outcome,
-            EscalationOutcome::EscalatedTo("dns-tunnel-masterdns".into())
+            EscalationOutcome::EscalatedTo("real-loopback".into())
         );
-        assert_eq!(ctrl.bridge().active().name, "dns-tunnel-masterdns");
+        assert_eq!(ctrl.bridge().active().name, "real-loopback");
         assert_eq!(ctrl.bridge().failover_count(), 1);
+        acceptor.join().unwrap();
     }
 
     #[test]
@@ -212,11 +254,14 @@ mod tests {
         }
         assert_eq!(decider.decide(), Decision::Escalate);
 
-        let (ctrl, tunnel) = controller_with_only_dns(DnsTunnelVariant::MasterDnsVpn);
-        tunnel.mark_healthy(true);
+        let (ctrl, acceptor) = controller_with_real_tcp();
         let outcome = ctrl.apply_decision(&decider.decide());
-        assert!(matches!(outcome, EscalationOutcome::EscalatedTo(_)));
-        assert_eq!(ctrl.bridge().active().name, "dns-tunnel-masterdns");
+        assert_eq!(
+            outcome,
+            EscalationOutcome::EscalatedTo("real-loopback".into())
+        );
+        assert_eq!(ctrl.bridge().active().name, "real-loopback");
+        acceptor.join().unwrap();
     }
 
     #[test]
@@ -233,16 +278,9 @@ mod tests {
         // Negative: Slipstream and standalone-DoH are absent by design.
         assert!(!names.contains(&"slipstream".to_string()));
         assert!(!names.iter().any(|n| n == "doh-transport"));
-        // DNS tunnels are unhealthy out of the box → Escalate finds the
-        // already-available WebTunnel (priority 20) first, not a DNS tunnel.
+        // Conceptual transports have no configured endpoint in the default
+        // registry, so escalation must not promote a fabricated connection.
         let outcome = ctrl.apply_decision(&Decision::Escalate);
-        assert_eq!(outcome, EscalationOutcome::EscalatedTo("webtunnel".into()));
-    }
-
-    #[test]
-    fn dns_tunnels_override_connect_rtt() {
-        let t = DnsTunnelTransport::spawn(DnsTunnelVariant::VayDns, "127.0.0.1:18001");
-        t.mark_healthy(true);
-        assert_eq!(t.connect().rtt_ms, 800);
+        assert_eq!(outcome, EscalationOutcome::NoLastResortAvailable);
     }
 }
