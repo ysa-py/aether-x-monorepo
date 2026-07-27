@@ -226,6 +226,22 @@ impl pb::core_supervisor_service_server::CoreSupervisorService for SupervisorSer
         // Wrap the broadcast stream, buffering into FLUSH_INTERVAL batches.
         let stream = async_stream::try_stream! {
             let mut evs = collector.subscribe();
+
+            // Store-and-forward replay: everything recorded while no control
+            // plane was attached (including events recovered from disk after a
+            // crash) is delivered first, in priority order, before live events.
+            let replay: Vec<TelemetryEvent> = collector
+                .drain_spooled()
+                .into_iter()
+                .filter(|ev| kinds.is_empty() || kinds.contains(&ev.event))
+                .collect();
+            if !replay.is_empty() {
+                info!(events = replay.len(), "replaying store-and-forward telemetry backlog");
+                for chunk in replay.chunks(256) {
+                    yield TelemetryBatch { events: chunk.to_vec() };
+                }
+            }
+
             let mut buf: Vec<TelemetryEvent> = Vec::new();
             loop {
                 let next = tokio::time::timeout(FLUSH_INTERVAL, evs.next()).await;
