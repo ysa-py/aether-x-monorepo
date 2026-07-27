@@ -15,10 +15,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use aether_supervisor::{
-    core_adapters, grpc, routing,
+    core_adapters, grpc,
+    live_signals::{run_live_signal_monitor, LiveSignalSource},
+    routing,
     runtime_preflight::RuntimePreflight,
-    store_and_forward::{OverflowPolicy, QueueLimits, StoreAndForward},
+    store_and_forward::{
+        Aes256GcmSpoolSealer, OverflowPolicy, QueueLimits, SpoolSealer, StoreAndForward,
+    },
     telemetry::Collector,
+    tor::{ConnectOptions, TcpConnectTarget, TcpEndpointTransport, Transport},
     CoreSupervisor,
 };
 
@@ -73,6 +78,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Live censorship measurement is disabled until an operator deliberately
+    // supplies controlled TCP/TLS/DNS anchors. The source performs real socket
+    // and UDP probes, then feeds its bounded aggregate into blackout::classify;
+    // it only emits evidence and has no transport-actuation side effect.
+    let live_signal_source = match std::env::var("AETHER_LIVE_SIGNAL_CONFIG") {
+        Ok(path) if !path.trim().is_empty() => {
+            let source = LiveSignalSource::from_path(&path)?;
+            tracing::info!(
+                config = %path,
+                interval_ms = source.interval().as_millis(),
+                "live censorship-signal monitor configured"
+            );
+            Some(Arc::new(source))
+        }
+        _ => {
+            tracing::info!(
+                "live censorship-signal monitor disabled; set AETHER_LIVE_SIGNAL_CONFIG to enable controlled probes"
+            );
+            None
+        }
+    };
+
     // Data-plane routing: resolve Direct/Proxy/Block before a core connects.
     // Load from AETHER_ROUTING_RULES (JSON file) if set, else the embedded preset.
     let resolver = Arc::new(match std::env::var("AETHER_ROUTING_RULES") {
@@ -91,6 +118,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let supervisor = Arc::new(CoreSupervisor::with_default_adapters());
+
+    // A real TCP connection path is opt-in only when an operator supplies both
+    // target and timeout. It has no fabricated fallback: a configured probe
+    // opens a real socket and logs the real result/error from `Transport::connect`.
+    if let Some(probe) = transport_probe_from_environment()? {
+        tokio::task::spawn_blocking(move || match probe.connect() {
+            Ok(connection) => tracing::info!(
+                transport = %connection.transport_name,
+                peer = %connection.peer,
+                rtt_ms = connection.rtt_ms,
+                "configured real TCP transport probe connected"
+            ),
+            Err(error) => {
+                tracing::warn!(error = %error, "configured real TCP transport probe failed")
+            }
+        });
+    }
+
+    if let Some(source) = live_signal_source {
+        tokio::spawn(run_live_signal_monitor(source));
+    }
 
     // Store-and-forward: telemetry recorded while the control plane is
     // detached is buffered (bounded) and, when AETHER_SUPERVISOR_SPOOL points
@@ -135,12 +183,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Build the store-and-forward queue from the environment.
 ///
-/// * `AETHER_SUPERVISOR_SPOOL` — path to the JSONL spool. Unset ⇒ in-memory
+/// * `AETHER_SUPERVISOR_SPOOL` — path to the sealed spool. Unset ⇒ in-memory
 ///   only (no disk writes, still bounded).
+/// * `AETHER_SUPERVISOR_SPOOL_KEY` — exactly 64 hexadecimal characters for an
+///   AES-256-GCM key. Missing/invalid ⇒ no disk spool is opened or written.
 /// * `AETHER_SUPERVISOR_SPOOL_MAX_ITEMS` / `..._MAX_BYTES` — capacity bound.
 ///
-/// A spool that cannot be opened is a warning, never a boot failure: losing
-/// buffered telemetry must not take the data plane down.
+/// A sealed spool that cannot be opened is a warning, never a boot failure:
+/// telemetry stays in the bounded in-memory queue rather than being persisted
+/// in plaintext.
 fn store_and_forward_from_environment() -> Arc<StoreAndForward> {
     let limits = QueueLimits {
         max_items: env_usize(
@@ -155,31 +206,53 @@ fn store_and_forward_from_environment() -> Arc<StoreAndForward> {
     };
 
     match std::env::var("AETHER_SUPERVISOR_SPOOL") {
-        Ok(path) if !path.trim().is_empty() => match StoreAndForward::open(&path, limits) {
-            Ok(queue) => {
-                tracing::info!(
-                    spool = %path,
-                    recovered = queue.recovered_items(),
-                    max_items = limits.max_items,
-                    max_bytes = limits.max_bytes,
-                    "store-and-forward spool opened; queue recovered from disk"
-                );
-                Arc::new(queue)
+        Ok(path) if !path.trim().is_empty() => {
+            // Disk persistence is never allowed to fall back to plaintext. A
+            // missing/invalid key leaves telemetry in the bounded in-memory
+            // queue, preserving data-plane availability without leaking a spool.
+            let sealer: Result<Arc<dyn SpoolSealer>, _> =
+                std::env::var("AETHER_SUPERVISOR_SPOOL_KEY")
+                    .map_err(|_| ())
+                    .and_then(|encoded| {
+                        Aes256GcmSpoolSealer::from_hex(&encoded)
+                            .map(|sealer| Arc::new(sealer) as Arc<dyn SpoolSealer>)
+                            .map_err(|_| ())
+                    });
+            match sealer {
+                Ok(sealer) => match StoreAndForward::open(&path, limits, sealer) {
+                    Ok(queue) => {
+                        tracing::info!(
+                            spool = %path,
+                            recovered = queue.recovered_items(),
+                            max_items = limits.max_items,
+                            max_bytes = limits.max_bytes,
+                            "sealed store-and-forward spool opened; queue recovered from disk"
+                        );
+                        Arc::new(queue)
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            spool = %path,
+                            error = %error,
+                            "sealed store-and-forward spool unavailable; falling back to in-memory queue"
+                        );
+                        Arc::new(StoreAndForward::with_limits(limits))
+                    }
+                },
+                Err(()) => {
+                    tracing::warn!(
+                        spool = %path,
+                        "disk spool disabled: AETHER_SUPERVISOR_SPOOL_KEY must contain a valid 32-byte hexadecimal key; using bounded in-memory queue"
+                    );
+                    Arc::new(StoreAndForward::with_limits(limits))
+                }
             }
-            Err(error) => {
-                tracing::warn!(
-                    spool = %path,
-                    error = %error,
-                    "store-and-forward spool unavailable; falling back to in-memory queue"
-                );
-                Arc::new(StoreAndForward::with_limits(limits))
-            }
-        },
+        }
         _ => {
             tracing::info!(
                 max_items = limits.max_items,
                 max_bytes = limits.max_bytes,
-                "store-and-forward queue in-memory (set AETHER_SUPERVISOR_SPOOL to persist)"
+                "store-and-forward queue in-memory (set AETHER_SUPERVISOR_SPOOL and AETHER_SUPERVISOR_SPOOL_KEY to persist sealed telemetry)"
             );
             Arc::new(StoreAndForward::with_limits(limits))
         }
@@ -197,6 +270,38 @@ fn env_usize(key: &str, default: usize) -> usize {
         },
         Err(_) => default,
     }
+}
+
+/// Build a production-reachable TCP transport probe only from explicit operator
+/// configuration. There is intentionally no default target or timeout.
+///
+/// * `AETHER_TRANSPORT_PROBE_TARGET` — `host:port`, `IP:port`, or `[IPv6]:port`.
+/// * `AETHER_TRANSPORT_PROBE_TIMEOUT_MS` — positive millisecond timeout.
+fn transport_probe_from_environment(
+) -> Result<Option<TcpEndpointTransport>, Box<dyn std::error::Error>> {
+    let target = match std::env::var("AETHER_TRANSPORT_PROBE_TARGET") {
+        Ok(value) if !value.trim().is_empty() => TcpConnectTarget::parse(value.trim())?,
+        _ => return Ok(None),
+    };
+    let raw_timeout = std::env::var("AETHER_TRANSPORT_PROBE_TIMEOUT_MS").map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "AETHER_TRANSPORT_PROBE_TIMEOUT_MS is required when AETHER_TRANSPORT_PROBE_TARGET is set",
+        )
+    })?;
+    let timeout_ms = raw_timeout.parse::<u64>().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("AETHER_TRANSPORT_PROBE_TIMEOUT_MS must be a positive integer: {error}"),
+        )
+    })?;
+    let options = ConnectOptions::new(std::time::Duration::from_millis(timeout_ms))?;
+    Ok(Some(TcpEndpointTransport::new(
+        "configured-tcp-probe",
+        1,
+        target,
+        options,
+    )))
 }
 
 fn supervisor_addr_from_environment() -> Result<SocketAddr, std::io::Error> {
@@ -244,6 +349,10 @@ fn init_tracing() {
 mod tests {
     use super::*;
 
+    fn test_spool_sealer() -> Arc<dyn SpoolSealer> {
+        Arc::new(Aes256GcmSpoolSealer::from_key_bytes([0xA5; 32]).unwrap())
+    }
+
     #[test]
     fn rejects_invalid_supervisor_address() {
         let value = "not-an-address";
@@ -286,7 +395,7 @@ mod tests {
             policy: OverflowPolicy::EvictOldest,
         };
         {
-            let q = StoreAndForward::open(&path, limits).unwrap();
+            let q = StoreAndForward::open(&path, limits, test_spool_sealer()).unwrap();
             q.try_enqueue(
                 aether_supervisor::store_and_forward::Priority::Control,
                 b"pending-telemetry".to_vec(),
@@ -294,7 +403,7 @@ mod tests {
             .unwrap();
             q.persist();
         }
-        let restarted = StoreAndForward::open(&path, limits).unwrap();
+        let restarted = StoreAndForward::open(&path, limits, test_spool_sealer()).unwrap();
         assert_eq!(restarted.pending(), 1);
         assert_eq!(restarted.recovered_items(), 1);
     }

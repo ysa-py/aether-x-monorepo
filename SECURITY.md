@@ -16,6 +16,7 @@ platform itself.
 | Control plane ↔ Client (REST/MCP) | TLS 1.3; mTLS for admin/reseller surfaces. |
 | Inter-service internal traffic | **Zero plaintext.** All internal calls are mTLS. |
 | Data at rest (Postgres, ClickHouse, Redis) | AES-256-GCM. Redis TLS enabled. |
+| Supervisor telemetry spool | AES-256-GCM sealed records, only when `AETHER_SUPERVISOR_SPOOL_KEY` is configured; otherwise bounded memory only. |
 
 Both Rust gRPC binaries additionally **refuse to bind plaintext on a
 non-loopback address**. Their tonic listeners load a server identity and

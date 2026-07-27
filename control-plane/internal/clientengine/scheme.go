@@ -158,6 +158,10 @@ func base64Encode(s string) string {
 	return b.String()
 }
 
+// builtinClients contains convenience launch templates. They are not external
+// client compatibility attestations: this repository does not execute these
+// URIs in the named applications. Operators must validate a pinned client
+// version before exposing a template to subscribers.
 func builtinClients() []ClientScheme {
 	return []ClientScheme{
 		{Name: "Sing-box", Platform: "all", URI: "sing-box://import-remote-profile?url={{SUB_URL_ENCODED}}&name={{REMARK}}", Icon: "singbox", Priority: 10},

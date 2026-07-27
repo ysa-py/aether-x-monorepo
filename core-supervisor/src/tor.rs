@@ -1,46 +1,306 @@
 //! Tor (Arti) + Pluggable Transports suite + transport registry.
 //!
-//! Provides a unified Transport trait implemented by five anti-censorship
-//! pluggable transports (WebTunnel, Snowflake, obfs4, Meek, Conjure) plus an
-//! Arti engine abstraction for pre-warmed Tor circuits. The registry selects
-//! the best available transport by priority for automatic, zero-downtime
-//! failover when DPI blocking is detected.
+//! Provides a unified `Transport` registry plus a real, configurable TCP
+//! endpoint transport. The historical named pluggable-transport/Arti types are
+//! retained as conceptual registry entries, but they return `NotConfigured`
+//! until an implementation supplies a real endpoint and protocol handshake;
+//! they cannot fabricate a connection or RTT.
 
+use std::io;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::RwLock;
+use thiserror::Error;
+use tokio::net::{lookup_host, TcpStream};
+use tokio::time::{timeout, Instant};
 
 // ---------------------------------------------------------------------------
-// Transport trait + connection handle
+// Transport trait + real TCP connection handle
 // ---------------------------------------------------------------------------
 
-/// A live or simulated transport connection.
+/// A successfully established, real TCP connection measurement.
 #[derive(Debug, Clone)]
 pub struct TransportConnection {
     pub transport_name: String,
     pub established: bool,
+    /// Monotonic elapsed time from connection attempt start through TCP connect,
+    /// rounded up to one millisecond when a loopback connection is sub-ms.
     pub rtt_ms: u32,
+    pub peer: SocketAddr,
 }
 
-/// Unified transport abstraction. Every pluggable transport and the Arti Tor
-/// engine implements this trait so the registry can select and fail over
-/// transparently.
-#[allow(clippy::needless_lifetimes)]
-pub trait Transport: Send + Sync + std::fmt::Debug {
-    /// Human-readable name (e.g. "webtunnel", "snowflake").
-    fn name(&self) -> &'static str;
-    /// Priority (lower = preferred). Used by the registry for selection.
-    fn priority(&self) -> u8;
-    /// Whether the transport is currently reachable.
-    fn is_available(&self) -> bool;
-    /// Establish a connection (real handshake in production; fast mock here).
-    fn connect(&self) -> TransportConnection {
-        TransportConnection {
-            transport_name: self.name().to_string(),
-            established: self.is_available(),
-            rtt_ms: 50,
+/// A configured TCP endpoint. Hostname resolution is deliberately explicit so
+/// DNS errors cannot be misreported as generic connection failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TcpConnectTarget {
+    SocketAddr(SocketAddr),
+    Hostname { hostname: String, port: u16 },
+}
+
+impl TcpConnectTarget {
+    /// Parse either `IP:port` / `[IPv6]:port` or `hostname:port`.
+    pub fn parse(value: &str) -> Result<Self, ConnectError> {
+        if let Ok(address) = value.parse::<SocketAddr>() {
+            return Ok(Self::SocketAddr(address));
         }
+        let (hostname, port) =
+            value
+                .rsplit_once(':')
+                .ok_or_else(|| ConnectError::InvalidTarget {
+                    target: value.to_string(),
+                })?;
+        let port = port
+            .parse::<u16>()
+            .map_err(|_| ConnectError::InvalidTarget {
+                target: value.to_string(),
+            })?;
+        if hostname.is_empty() || port == 0 {
+            return Err(ConnectError::InvalidTarget {
+                target: value.to_string(),
+            });
+        }
+        Ok(Self::Hostname {
+            hostname: hostname.to_string(),
+            port,
+        })
+    }
+
+    #[must_use]
+    pub fn display(&self) -> String {
+        match self {
+            Self::SocketAddr(address) => address.to_string(),
+            Self::Hostname { hostname, port } => format!("{hostname}:{port}"),
+        }
+    }
+}
+
+/// Every connection attempt gets an explicit, caller-provided timeout. There
+/// is intentionally no production default: a deployment must state its budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectOptions {
+    pub timeout: Duration,
+}
+
+impl ConnectOptions {
+    pub fn new(timeout: Duration) -> Result<Self, ConnectError> {
+        if timeout.is_zero() {
+            return Err(ConnectError::InvalidTimeout);
+        }
+        Ok(Self { timeout })
+    }
+}
+
+/// Real, distinct connection failures. Each variant preserves the underlying
+/// I/O error instead of converting it into a fabricated connection result.
+#[derive(Debug, Error)]
+pub enum ConnectError {
+    #[error("connection to {target} was refused")]
+    ConnectionRefused {
+        target: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("connection timed out after {after:?}")]
+    Timeout { after: Duration },
+    #[error("DNS resolution failed for {hostname}")]
+    DnsResolutionFailed {
+        hostname: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("TLS handshake failed")]
+    TlsHandshakeFailed {
+        #[source]
+        source: io::Error,
+    },
+    #[error("I/O error while connecting to {target}")]
+    IoError {
+        target: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("transport {transport} has no configured real network endpoint")]
+    NotConfigured { transport: String },
+    #[error("invalid TCP connection target {target}")]
+    InvalidTarget { target: String },
+    #[error("connection timeout must be non-zero")]
+    InvalidTimeout,
+    #[error("failed to create or join the Tokio connection runtime")]
+    RuntimeUnavailable,
+}
+
+/// Open a genuine TCP socket with explicit DNS resolution and a monotonic RTT
+/// measurement. This is the single implementation used by production endpoint
+/// transports and by the real-I/O integration tests below.
+pub async fn connect_tcp(
+    transport_name: impl Into<String>,
+    target: TcpConnectTarget,
+    options: ConnectOptions,
+) -> Result<TransportConnection, ConnectError> {
+    let transport_name = transport_name.into();
+    let started = Instant::now();
+    let target_display = target.display();
+    let addresses = match target {
+        TcpConnectTarget::SocketAddr(address) => vec![address],
+        TcpConnectTarget::Hostname { hostname, port } => {
+            // `lookup_host` retains a borrow until its result is dropped; keep a
+            // separate lookup string so the original hostname remains available
+            // for the typed DNS error below.
+            let lookup_hostname = hostname.clone();
+            let resolution = timeout(
+                options.timeout,
+                lookup_host((lookup_hostname.as_str(), port)),
+            )
+            .await;
+            match resolution {
+                Ok(Ok(addresses)) => addresses.collect::<Vec<_>>(),
+                Ok(Err(source)) => {
+                    return Err(ConnectError::DnsResolutionFailed { hostname, source })
+                }
+                Err(_) => {
+                    return Err(ConnectError::Timeout {
+                        after: options.timeout,
+                    })
+                }
+            }
+        }
+    };
+    if addresses.is_empty() {
+        return Err(ConnectError::IoError {
+            target: target_display,
+            source: io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "DNS returned no socket addresses",
+            ),
+        });
+    }
+
+    let mut last_error = None;
+    for address in addresses {
+        let elapsed = started.elapsed();
+        let Some(remaining) = options.timeout.checked_sub(elapsed) else {
+            return Err(ConnectError::Timeout {
+                after: options.timeout,
+            });
+        };
+        match timeout(remaining, TcpStream::connect(address)).await {
+            Ok(Ok(_stream)) => {
+                let elapsed_ms = started.elapsed().as_millis();
+                let rtt_ms = elapsed_ms.clamp(1, u128::from(u32::MAX)) as u32;
+                return Ok(TransportConnection {
+                    transport_name,
+                    established: true,
+                    rtt_ms,
+                    peer: address,
+                });
+            }
+            Ok(Err(source)) if source.kind() == io::ErrorKind::ConnectionRefused => {
+                return Err(ConnectError::ConnectionRefused {
+                    target: address.to_string(),
+                    source,
+                });
+            }
+            Ok(Err(source)) => last_error = Some((address, source)),
+            Err(_) => {
+                return Err(ConnectError::Timeout {
+                    after: options.timeout,
+                })
+            }
+        }
+    }
+    if let Some((address, source)) = last_error {
+        return Err(ConnectError::IoError {
+            target: address.to_string(),
+            source,
+        });
+    }
+    Err(ConnectError::IoError {
+        target: target_display,
+        source: io::Error::new(io::ErrorKind::Other, "connection target yielded no attempt"),
+    })
+}
+
+/// A concrete, production-selectable TCP endpoint transport. Unlike the
+/// historical static Transport default, every call opens a socket and returns
+/// the actual measured RTT or a real error.
+#[derive(Debug, Clone)]
+pub struct TcpEndpointTransport {
+    name: String,
+    priority: u8,
+    target: TcpConnectTarget,
+    options: ConnectOptions,
+}
+
+impl TcpEndpointTransport {
+    pub fn new(
+        name: impl Into<String>,
+        priority: u8,
+        target: TcpConnectTarget,
+        options: ConnectOptions,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            priority,
+            target,
+            options,
+        }
+    }
+
+    pub async fn connect_async(&self) -> Result<TransportConnection, ConnectError> {
+        connect_tcp(self.name.clone(), self.target.clone(), self.options).await
+    }
+}
+
+/// Unified transport abstraction. A transport without an actual configured
+/// endpoint returns `NotConfigured`; it can never fabricate reachability or RTT.
+pub trait Transport: Send + Sync + std::fmt::Debug {
+    fn name(&self) -> &str;
+    fn priority(&self) -> u8;
+    fn is_available(&self) -> bool;
+    fn connect(&self) -> Result<TransportConnection, ConnectError> {
+        Err(ConnectError::NotConfigured {
+            transport: self.name().to_string(),
+        })
+    }
+}
+
+impl Transport for TcpEndpointTransport {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn priority(&self) -> u8 {
+        self.priority
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn connect(&self) -> Result<TransportConnection, ConnectError> {
+        let name = self.name.clone();
+        let target = self.target.clone();
+        let options = self.options;
+        let worker = std::thread::Builder::new()
+            .name(format!("aether-connect-{name}"))
+            .spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .enable_time()
+                    .build()
+                    .map_err(|_| ConnectError::RuntimeUnavailable)?
+                    .block_on(connect_tcp(name, target, options))
+            })
+            .map_err(|source| ConnectError::IoError {
+                target: self.target.display(),
+                source,
+            })?;
+        worker
+            .join()
+            .map_err(|_| ConnectError::RuntimeUnavailable)?
     }
 }
 
@@ -68,7 +328,7 @@ impl WebTunnel {
 }
 
 impl Transport for WebTunnel {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "webtunnel"
     }
     fn priority(&self) -> u8 {
@@ -97,7 +357,7 @@ impl Snowflake {
 }
 
 impl Transport for Snowflake {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "snowflake"
     }
     fn priority(&self) -> u8 {
@@ -126,7 +386,7 @@ impl Obfs4 {
 }
 
 impl Transport for Obfs4 {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "obfs4"
     }
     fn priority(&self) -> u8 {
@@ -155,7 +415,7 @@ impl Meek {
 }
 
 impl Transport for Meek {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "meek"
     }
     fn priority(&self) -> u8 {
@@ -184,7 +444,7 @@ impl Conjure {
 }
 
 impl Transport for Conjure {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "conjure"
     }
     fn priority(&self) -> u8 {
@@ -282,7 +542,7 @@ impl Default for ArtiEngine {
 }
 
 impl Transport for ArtiEngine {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "arti-tor"
     }
     fn priority(&self) -> u8 {
@@ -422,10 +682,11 @@ mod tests {
     }
 
     #[test]
-    fn connect_returns_established() {
+    fn unconfigured_conceptual_transport_never_fabricates_a_connection() {
         let wt = WebTunnel::new("cdn.example.com");
-        let conn = wt.connect();
-        assert!(conn.established);
-        assert_eq!(conn.transport_name, "webtunnel");
+        assert!(matches!(
+            wt.connect(),
+            Err(ConnectError::NotConfigured { .. })
+        ));
     }
 }

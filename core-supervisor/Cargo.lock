@@ -17,6 +17,7 @@ dependencies = [
  "proptest",
  "prost",
  "rustls",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

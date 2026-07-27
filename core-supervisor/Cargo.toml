@@ -28,8 +28,9 @@ prost = "0.13"
 dashmap = "6"
 parking_lot = "0.12"
 once_cell = "1"
-# TLS
+# TLS / at-rest AEAD (ring is already selected by rustls' ring provider)
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+ring = "0.17"
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -48,7 +49,14 @@ async-trait = "0.1"
 async-stream = "0.3"
 futures = "0.3"
 # Cryptography (reuses antiforgery's Ed25519 key material)
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
+# Real RFC 7748 X25519 and HKDF-SHA-256 key agreement. ML-KEM remains
+# deliberately unconfigured until an independently audited implementation is
+# selected; see docs/CRYPTOGRAPHIC_CORE.md.
+x25519-dalek = { version = "2.0.1", features = ["static_secrets", "zeroize"] }
+hkdf = "0.12"
+subtle = "2.6"
+zeroize = "1.8"
 sha2 = "0.10"
 rand = "0.8"
 

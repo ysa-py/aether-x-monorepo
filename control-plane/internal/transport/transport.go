@@ -96,23 +96,23 @@ func Protocols() []Protocol {
 	}
 }
 
-// builtin is the canonical, hand-curated registry. Add a transport here (or in
-// the loaded JSON overlay) to support it everywhere with zero protocol-core
-// changes. Covers everything requested: tcp, kcp, ws, httpupgrade, xhttp, h2,
-// grpc, quic, and the legacy http/meek transports.
+// builtin is the canonical, hand-curated registry for the admin/config
+// vocabulary. Adding an entry here does not implement it in a proxy core or
+// establish external-client support. The list includes tcp, kcp, ws,
+// httpupgrade, xhttp, h2, grpc, quic, and legacy http/meek identifiers.
 func builtin() []Transport {
 	return []Transport{
 		{
 			ID: "xhttp", Name: "XHTTP (SplitHTTP)", NameFA: "XHTTP (جدیدترین)",
 			Family: FamilyHTTP, NeedsPath: true, NeedsHost: true, NeedsMode: true,
 			Modes:       []string{"packet-up", "stream-up", "stream-one"},
-			Description: "Newest Xray transport; multiplexed HTTP with packet-up / stream-up / stream-one modes — strongest anti-DPI in Iran.",
+			Description: "Xray SplitHTTP transport with packet-up / stream-up / stream-one modes. Verify the deployed Xray and subscriber versions before publication.",
 			Newest:      true,
 		},
 		{
 			ID: "httpupgrade", Name: "HTTPUpgrade", NameFA: "ارتقاء HTTP",
 			Family: FamilyWebSocket, NeedsPath: true, NeedsHost: true,
-			Description: "HTTP Upgrade handshake reused as a persistent stream — lower overhead than raw WebSocket.",
+			Description: "HTTP Upgrade handshake reused as a persistent stream. Verify deployed core and subscriber support before publication.",
 			Newest:      true,
 		},
 		{
@@ -124,7 +124,7 @@ func builtin() []Transport {
 		{
 			ID: "grpc", Name: "gRPC", NameFA: "gRPC",
 			Family: FamilyGRPC, NeedsService: true,
-			Description: "Multiplexed HTTP/2 gRPC streams; great DPI resistance via serviceName camouflage.",
+			Description: "Multiplexed HTTP/2 gRPC streams with a serviceName setting. DPI behavior and client support require deployment-specific verification.",
 		},
 		{
 			ID: "h2", Name: "HTTP/2", NameFA: "HTTP/2",
@@ -134,7 +134,7 @@ func builtin() []Transport {
 		{
 			ID: "ws", Name: "WebSocket", NameFA: "وب‌سوکت",
 			Family: FamilyWebSocket, NeedsPath: true, NeedsHost: true,
-			Description: "Classic WebSocket; universally supported by every client.",
+			Description: "Classic WebSocket stream. Support varies by client/version and must be verified before publication.",
 		},
 		{
 			ID: "kcp", Name: "mKCP", NameFA: "mKCP",

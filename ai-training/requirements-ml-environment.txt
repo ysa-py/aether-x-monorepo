@@ -1,0 +1,6 @@
+# Reproducible offline training/inference environment verification.
+# Never install this file in a production service image.
+numpy==2.3.5
+onnx==1.19.1
+onnxruntime==1.28.0
+scikit-learn==1.8.0

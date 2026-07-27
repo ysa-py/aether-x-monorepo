@@ -13,22 +13,25 @@
 //!    ([`OverflowPolicy::RejectNew`]) or evicts the oldest bulk item
 //!    ([`OverflowPolicy::EvictOldest`]) — never unbounded growth. Control-lane
 //!    items are never evicted to make room for bulk items.
-//! 2. **Disk persistence.** With a spool path configured, every accepted item
-//!    is appended as a JSON line, and the file is compacted (rewritten) on
-//!    flush/eviction. This deliberately mirrors the `DiskSpool` pattern in
-//!    `control-plane/internal/telemetry/clickhouse.go` (append JSONL on the
-//!    write path, read-and-truncate on drain) so both planes behave the same
-//!    way during an outage.
-//! 3. **Crash recovery.** [`StoreAndForward::open`] reloads the spool from disk
-//!    at startup, restoring lane order, IDs, and the next-ID watermark. A
-//!    torn/partial trailing line is skipped, not fatal.
+//! 2. **Sealed disk persistence.** With a spool path and AES-256-GCM key
+//!    configured, every accepted item is authenticated-encrypted before it is
+//!    appended as a JSON envelope. The file is compacted (rewritten with fresh
+//!    nonces) on flush/eviction. There is no plaintext disk constructor.
+//! 3. **Crash recovery.** [`StoreAndForward::open`] authenticates and reloads
+//!    the spool at startup, restoring lane order, IDs, and the next-ID
+//!    watermark. A torn/partial trailing record is skipped; a complete record
+//!    that fails authentication is rejected without overwriting the spool.
 
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
+use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Queue priority lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +48,139 @@ pub struct QueuedItem {
     pub id: u64,
     pub priority: Priority,
     pub data: Vec<u8>,
+}
+
+const SEALED_SPOOL_MAGIC: &[u8] = b"AETHER-SPOOL-AES-256-GCM-V1\n";
+const SEALED_SPOOL_RECORD_VERSION: u8 = 1;
+const AES_256_GCM_KEY_BYTES: usize = 32;
+
+/// The encrypted, authenticated on-disk representation of one queued item.
+/// It deliberately contains no queue ID, lane, or application payload outside
+/// the AEAD ciphertext.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SealedSpoolRecord {
+    pub version: u8,
+    pub nonce: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+}
+
+/// A real sealing boundary for disk-backed store-and-forward queues. The queue
+/// owns serialization and crash-safe file replacement; a sealer owns only
+/// authenticated encryption/decryption of one serialized item.
+pub trait SpoolSealer: Send + Sync {
+    fn seal(&self, plaintext: &[u8]) -> Result<SealedSpoolRecord, SpoolSealError>;
+    fn unseal(&self, record: &SealedSpoolRecord) -> Result<Vec<u8>, SpoolSealError>;
+}
+
+/// Errors intentionally omit cryptographic internals and never include key
+/// material or payload bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum SpoolSealError {
+    #[error("spool key must be exactly 32 bytes (AES-256-GCM)")]
+    InvalidKeyLength,
+    #[error("spool key is rejected by the AEAD implementation")]
+    InvalidKey,
+    #[error("secure random nonce generation failed")]
+    Randomness,
+    #[error("sealed spool record has an invalid format")]
+    InvalidRecord,
+    #[error("sealed spool record authentication failed")]
+    Authentication,
+}
+
+/// AES-256-GCM implementation of [`SpoolSealer`], using `ring`, which is
+/// already selected as rustls' cryptographic provider in this workspace. Every
+/// record receives a fresh, random 96-bit nonce and an authentication tag.
+pub struct Aes256GcmSpoolSealer {
+    key: LessSafeKey,
+    random: SystemRandom,
+}
+
+impl std::fmt::Debug for Aes256GcmSpoolSealer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Aes256GcmSpoolSealer(<redacted>)")
+    }
+}
+
+impl Aes256GcmSpoolSealer {
+    /// Construct a sealer from exactly 32 key bytes. The caller is responsible
+    /// for loading this secret from a deployment secret store, never the spool.
+    pub fn from_key_bytes(mut key: [u8; AES_256_GCM_KEY_BYTES]) -> Result<Self, SpoolSealError> {
+        let unbound = UnboundKey::new(&AES_256_GCM, &key);
+        key.fill(0);
+        let unbound = unbound.map_err(|_| SpoolSealError::InvalidKey)?;
+        Ok(Self {
+            key: LessSafeKey::new(unbound),
+            random: SystemRandom::new(),
+        })
+    }
+
+    /// Decode the 64 lowercase/uppercase hexadecimal characters accepted by
+    /// `AETHER_SUPERVISOR_SPOOL_KEY`. No key is logged or written to disk.
+    pub fn from_hex(hex: &str) -> Result<Self, SpoolSealError> {
+        let raw = hex.trim();
+        if raw.len() != AES_256_GCM_KEY_BYTES * 2 {
+            return Err(SpoolSealError::InvalidKeyLength);
+        }
+        let mut key = [0u8; AES_256_GCM_KEY_BYTES];
+        for (slot, encoded) in key.iter_mut().zip(raw.as_bytes().chunks_exact(2)) {
+            *slot = (hex_nibble(encoded[0]).ok_or(SpoolSealError::InvalidKeyLength)? << 4)
+                | hex_nibble(encoded[1]).ok_or(SpoolSealError::InvalidKeyLength)?;
+        }
+        Self::from_key_bytes(key)
+    }
+}
+
+fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+impl SpoolSealer for Aes256GcmSpoolSealer {
+    fn seal(&self, plaintext: &[u8]) -> Result<SealedSpoolRecord, SpoolSealError> {
+        let mut nonce = [0u8; NONCE_LEN];
+        self.random
+            .fill(&mut nonce)
+            .map_err(|_| SpoolSealError::Randomness)?;
+        let mut ciphertext = plaintext.to_vec();
+        self.key
+            .seal_in_place_append_tag(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::empty(),
+                &mut ciphertext,
+            )
+            .map_err(|_| SpoolSealError::Authentication)?;
+        Ok(SealedSpoolRecord {
+            version: SEALED_SPOOL_RECORD_VERSION,
+            nonce: nonce.to_vec(),
+            ciphertext,
+        })
+    }
+
+    fn unseal(&self, record: &SealedSpoolRecord) -> Result<Vec<u8>, SpoolSealError> {
+        if record.version != SEALED_SPOOL_RECORD_VERSION || record.nonce.len() != NONCE_LEN {
+            return Err(SpoolSealError::InvalidRecord);
+        }
+        let nonce: [u8; NONCE_LEN] = record
+            .nonce
+            .as_slice()
+            .try_into()
+            .map_err(|_| SpoolSealError::InvalidRecord)?;
+        let mut ciphertext = record.ciphertext.clone();
+        let plaintext = self
+            .key
+            .open_in_place(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::empty(),
+                &mut ciphertext,
+            )
+            .map_err(|_| SpoolSealError::Authentication)?;
+        Ok(plaintext.to_vec())
+    }
 }
 
 /// What to do when the queue is full.
@@ -146,11 +282,17 @@ impl Inner {
     }
 }
 
+struct DiskSpool {
+    path: PathBuf,
+    sealer: Arc<dyn SpoolSealer>,
+}
+
 /// The store-and-forward queue. Thread-safe, bounded, optionally disk-backed.
+/// A disk-backed queue is always sealed; no plaintext disk constructor exists.
 pub struct StoreAndForward {
     inner: Mutex<Inner>,
     limits: QueueLimits,
-    spool: Option<PathBuf>,
+    spool: Option<DiskSpool>,
 }
 
 impl StoreAndForward {
@@ -182,13 +324,19 @@ impl StoreAndForward {
         }
     }
 
-    /// Open a disk-backed queue, **recovering any queue contents left behind by
-    /// a crash**. The parent directory is created if missing (same behaviour as
-    /// `telemetry.NewDiskSpool` in the Go control plane).
+    /// Open a sealed disk-backed queue, **recovering any queue contents left
+    /// behind by a crash**. Every disk-backed queue requires a real
+    /// [`SpoolSealer`]; an old plaintext JSONL spool is rejected rather than
+    /// read, compacted, and silently re-written.
     ///
-    /// Corrupt or partially-written trailing lines are skipped: a crash mid-write
-    /// costs at most the one item being written, never the whole queue.
-    pub fn open(path: impl AsRef<Path>, limits: QueueLimits) -> std::io::Result<Self> {
+    /// Corrupt or partially-written trailing records are skipped. Authentication
+    /// failures for a complete record are fatal: accepting a wrong key as an
+    /// empty queue would destroy the only recoverable copy on the next rewrite.
+    pub fn open(
+        path: impl AsRef<Path>,
+        limits: QueueLimits,
+        sealer: Arc<dyn SpoolSealer>,
+    ) -> std::io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -197,10 +345,13 @@ impl StoreAndForward {
         }
 
         let mut queue = Self::with_limits(limits);
-        queue.spool = Some(path.clone());
+        queue.spool = Some(DiskSpool {
+            path: path.clone(),
+            sealer,
+        });
 
         let recovered = match std::fs::read(&path) {
-            Ok(bytes) => Self::parse_spool(&bytes),
+            Ok(bytes) => queue.parse_spool(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(e),
         };
@@ -227,24 +378,61 @@ impl StoreAndForward {
             }
         }
 
-        // Compact: rewrite the spool from the accepted, in-order contents so the
-        // on-disk state always matches memory after startup.
+        // Compact: write the authenticated format header plus fresh ciphertext
+        // records so the on-disk state always matches accepted memory state.
         queue.rewrite_spool();
         Ok(queue)
     }
 
-    fn parse_spool(bytes: &[u8]) -> Vec<QueuedItem> {
+    fn parse_spool(&self, bytes: &[u8]) -> std::io::Result<Vec<QueuedItem>> {
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(records) = bytes.strip_prefix(SEALED_SPOOL_MAGIC) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "plaintext or unknown spool format; refusing to overwrite without a migration",
+            ));
+        };
+        let spool = self.spool.as_ref().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "sealed spool is not configured")
+        })?;
+        let lines: Vec<&[u8]> = records.split(|byte| *byte == b'\n').collect();
+        let has_torn_tail = !records.ends_with(b"\n");
         let mut out = Vec::new();
-        for line in bytes.split(|b| *b == b'\n') {
+        for (index, line) in lines.iter().enumerate() {
             if line.is_empty() {
                 continue;
             }
-            if let Ok(item) = serde_json::from_slice::<QueuedItem>(line) {
-                out.push(item);
+            let is_torn_tail = has_torn_tail && index + 1 == lines.len();
+            let record = match serde_json::from_slice::<SealedSpoolRecord>(line) {
+                Ok(record) => record,
+                Err(_) if is_torn_tail => continue,
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "sealed spool contains an invalid non-trailing record",
+                    ));
+                }
+            };
+            let plaintext = spool.sealer.unseal(&record).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("sealed spool record cannot be opened: {error}"),
+                )
+            })?;
+            match serde_json::from_slice::<QueuedItem>(&plaintext) {
+                Ok(item) => out.push(item),
+                Err(_) if is_torn_tail => continue,
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "sealed spool authenticated payload is not a queued item",
+                    ));
+                }
             }
-            // A line that does not parse is a torn tail from a crash: skip it.
         }
-        out
+        Ok(out)
     }
 
     /// The configured capacity bound.
@@ -256,7 +444,7 @@ impl StoreAndForward {
     /// The spool path, if this queue is disk-backed.
     #[must_use]
     pub fn spool_path(&self) -> Option<&Path> {
-        self.spool.as_deref()
+        self.spool.as_ref().map(|spool| spool.path.as_path())
     }
 
     /// Enqueue a data item at the given priority.
@@ -373,21 +561,24 @@ impl StoreAndForward {
         self.rewrite_spool();
     }
 
-    // ---- disk spool ------------------------------------------------------
+    // ---- sealed disk spool -----------------------------------------------
 
-    /// Append the item with `id` as a JSON line (the hot path; O(1) write).
+    /// Append the encrypted item with `id` (the hot path; O(1) append). The
+    /// plaintext serialized queue item is never written to the spool.
     fn append_spool(&self, id: u64) {
-        let Some(path) = self.spool.as_ref() else {
+        let Some(spool) = self.spool.as_ref() else {
             return;
         };
         let mut g = self.inner.lock();
-        let line = g
+        let record = g
             .control
             .iter()
             .chain(g.bulk.iter())
-            .find(|i| i.id == id)
-            .and_then(|item| serde_json::to_vec(item).ok());
-        let Some(mut line) = line else {
+            .find(|item| item.id == id)
+            .and_then(|item| serde_json::to_vec(item).ok())
+            .and_then(|serialized| spool.sealer.seal(&serialized).ok())
+            .and_then(|sealed| serde_json::to_vec(&sealed).ok());
+        let Some(mut line) = record else {
             g.persist_errors += 1;
             return;
         };
@@ -396,38 +587,43 @@ impl StoreAndForward {
         let write = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
-            .and_then(|mut f| f.write_all(&line));
+            .open(&spool.path)
+            .and_then(|mut file| file.write_all(&line));
         if write.is_err() {
-            // Best effort, exactly like the Go DiskSpool: a failed disk write
-            // must never take down the data path, but it IS counted so the gap
-            // is visible in telemetry instead of silent.
+            // Best effort: a failed disk write must not take down the data
+            // plane, but it is counted and no plaintext fallback is attempted.
             g.persist_errors += 1;
         }
     }
 
-    /// Rewrite the whole spool from current memory state (after flush/eviction).
+    /// Rewrite the whole spool from current memory state (after flush/eviction)
+    /// using fresh AEAD nonces. A crash mid-compaction leaves either the old
+    /// authenticated spool or the new one, never a plaintext partial queue.
     fn rewrite_spool(&self) {
-        let Some(path) = self.spool.as_ref() else {
+        let Some(spool) = self.spool.as_ref() else {
             return;
         };
         let mut g = self.inner.lock();
-        let mut buf = Vec::new();
+        let mut buf = Vec::from(SEALED_SPOOL_MAGIC);
         let mut encode_errors = 0u64;
         for item in g.control.iter().chain(g.bulk.iter()) {
-            match serde_json::to_vec(item) {
-                Ok(mut line) => {
+            let line = serde_json::to_vec(item)
+                .ok()
+                .and_then(|serialized| spool.sealer.seal(&serialized).ok())
+                .and_then(|sealed| serde_json::to_vec(&sealed).ok());
+            match line {
+                Some(mut line) => {
                     line.push(b'\n');
                     buf.extend_from_slice(&line);
                 }
-                Err(_) => encode_errors += 1,
+                None => encode_errors += 1,
             }
         }
         g.persist_errors += encode_errors;
         // Write to a temp file then rename: a crash mid-compaction leaves either
         // the old spool or the new one, never a half-written queue.
-        let tmp = path.with_extension("tmp");
-        let written = std::fs::write(&tmp, &buf).and_then(|()| std::fs::rename(&tmp, path));
+        let tmp = spool.path.with_extension("tmp");
+        let written = std::fs::write(&tmp, &buf).and_then(|()| std::fs::rename(&tmp, &spool.path));
         if written.is_err() {
             g.persist_errors += 1;
         }
@@ -505,6 +701,17 @@ mod tests {
             max_bytes: 1 << 30,
             policy: OverflowPolicy::RejectNew,
         }
+    }
+
+    fn test_sealer() -> Arc<dyn SpoolSealer> {
+        Arc::new(Aes256GcmSpoolSealer::from_key_bytes([0xA5; AES_256_GCM_KEY_BYTES]).unwrap())
+    }
+
+    fn open_for_tests(
+        path: impl AsRef<Path>,
+        limits: QueueLimits,
+    ) -> std::io::Result<StoreAndForward> {
+        StoreAndForward::open(path, limits, test_sealer())
     }
 
     #[test]
@@ -694,7 +901,7 @@ mod tests {
         let path = dir.path().join("nested").join("snf.jsonl");
 
         {
-            let q = StoreAndForward::open(&path, QueueLimits::default()).unwrap();
+            let q = open_for_tests(&path, QueueLimits::default()).unwrap();
             q.try_enqueue(Priority::Control, b"ctrl-1".to_vec())
                 .unwrap();
             q.try_enqueue(Priority::Bulk, b"bulk-1".to_vec()).unwrap();
@@ -706,7 +913,7 @@ mod tests {
 
         assert!(path.exists(), "spool file must exist on disk");
 
-        let recovered = StoreAndForward::open(&path, QueueLimits::default()).unwrap();
+        let recovered = open_for_tests(&path, QueueLimits::default()).unwrap();
         assert_eq!(recovered.pending(), 3, "queue must survive a crash");
         assert_eq!(recovered.recovered_items(), 3);
         let flushed = recovered.flush();
@@ -723,16 +930,97 @@ mod tests {
     }
 
     #[test]
+    fn spool_bytes_are_aead_encrypted_and_recover_with_the_same_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sealed-spool");
+        let secret = b"telemetry-secret-must-never-appear-on-disk".to_vec();
+        {
+            let queue = open_for_tests(&path, QueueLimits::default()).unwrap();
+            queue
+                .try_enqueue(Priority::Control, secret.clone())
+                .unwrap();
+            queue.persist();
+        }
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(SEALED_SPOOL_MAGIC));
+        assert!(
+            !bytes
+                .windows(secret.len())
+                .any(|window| window == secret.as_slice()),
+            "plaintext payload leaked into sealed spool: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+        assert!(
+            !bytes
+                .windows(b"\"data\"".len())
+                .any(|window| window == b"\"data\""),
+            "queued-item JSON fields must be inside ciphertext"
+        );
+        let first_record = bytes[SEALED_SPOOL_MAGIC.len()..]
+            .split(|byte| *byte == b'\n')
+            .find(|line| !line.is_empty())
+            .expect("sealed spool must contain one record");
+        let record: SealedSpoolRecord = serde_json::from_slice(first_record).unwrap();
+        assert_eq!(record.version, SEALED_SPOOL_RECORD_VERSION);
+        assert_eq!(record.nonce.len(), NONCE_LEN);
+        assert_ne!(record.ciphertext, secret);
+
+        let recovered = open_for_tests(&path, QueueLimits::default()).unwrap();
+        assert_eq!(recovered.flush()[0].data, secret);
+    }
+
+    #[test]
+    fn wrong_key_is_rejected_without_overwriting_the_sealed_spool() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sealed-spool");
+        {
+            let queue = open_for_tests(&path, QueueLimits::default()).unwrap();
+            queue
+                .try_enqueue(Priority::Control, b"key-bound-ciphertext".to_vec())
+                .unwrap();
+            queue.persist();
+        }
+        let before = std::fs::read(&path).unwrap();
+        let wrong_key: Arc<dyn SpoolSealer> =
+            Arc::new(Aes256GcmSpoolSealer::from_key_bytes([0x5A; AES_256_GCM_KEY_BYTES]).unwrap());
+        let error = match StoreAndForward::open(&path, QueueLimits::default(), wrong_key) {
+            Ok(_) => panic!("a wrong spool key must not be accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "failed open must not rewrite spool"
+        );
+    }
+
+    #[test]
+    fn plaintext_legacy_spool_is_rejected_without_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.jsonl");
+        let plaintext = b"{\"id\":0,\"priority\":\"Control\",\"data\":[1]}\n";
+        std::fs::write(&path, plaintext).unwrap();
+        let error = match StoreAndForward::open(&path, QueueLimits::default(), test_sealer()) {
+            Ok(_) => panic!("plaintext spool must not be silently accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), plaintext);
+    }
+
+    #[test]
     fn flushed_items_are_not_replayed_after_restart() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("snf.jsonl");
         {
-            let q = StoreAndForward::open(&path, QueueLimits::default()).unwrap();
+            let q = open_for_tests(&path, QueueLimits::default()).unwrap();
             q.try_enqueue(Priority::Control, b"delivered".to_vec())
                 .unwrap();
             assert_eq!(q.flush().len(), 1);
         }
-        let restarted = StoreAndForward::open(&path, QueueLimits::default()).unwrap();
+        let restarted = open_for_tests(&path, QueueLimits::default()).unwrap();
         assert_eq!(restarted.pending(), 0, "delivered data must not replay");
         assert_eq!(restarted.recovered_items(), 0);
     }
@@ -742,7 +1030,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("snf.jsonl");
         {
-            let q = StoreAndForward::open(&path, QueueLimits::default()).unwrap();
+            let q = open_for_tests(&path, QueueLimits::default()).unwrap();
             q.try_enqueue(Priority::Control, b"good".to_vec()).unwrap();
         }
         // Append a half-written record, exactly what a power cut produces.
@@ -754,7 +1042,7 @@ mod tests {
             .unwrap();
         drop(f);
 
-        let recovered = StoreAndForward::open(&path, QueueLimits::default()).unwrap();
+        let recovered = open_for_tests(&path, QueueLimits::default()).unwrap();
         assert_eq!(recovered.pending(), 1, "intact records must still load");
         assert_eq!(recovered.flush()[0].data, b"good".to_vec());
     }
@@ -764,7 +1052,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("snf.jsonl");
         {
-            let q = StoreAndForward::open(
+            let q = open_for_tests(
                 &path,
                 QueueLimits {
                     max_items: 100,
@@ -778,7 +1066,7 @@ mod tests {
             }
         }
         // Restart with a much smaller bound: a large spool must not blow past it.
-        let tight = StoreAndForward::open(
+        let tight = open_for_tests(
             &path,
             QueueLimits {
                 max_items: 10,
@@ -801,13 +1089,13 @@ mod tests {
             policy: OverflowPolicy::EvictOldest,
         };
         {
-            let q = StoreAndForward::open(&path, limits).unwrap();
+            let q = open_for_tests(&path, limits).unwrap();
             for i in 0..5u8 {
                 q.try_enqueue(Priority::Bulk, vec![i; 4]).unwrap();
             }
             assert_eq!(q.pending(), 2);
         }
-        let recovered = StoreAndForward::open(&path, limits).unwrap();
+        let recovered = open_for_tests(&path, limits).unwrap();
         assert_eq!(
             recovered.pending(),
             2,

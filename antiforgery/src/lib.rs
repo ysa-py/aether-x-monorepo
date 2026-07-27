@@ -3,8 +3,9 @@
 //! The user-facing panel must NEVER trust client-reported expiry or quota.
 //! This crate provides the cryptographic primitives that make that enforceable:
 //!
-//!   - [`token`]: Ed25519-signed subscription tokens carrying (verifiable)
-//!     quota + expiry. A client cannot forge remaining time/bytes.
+//!   - [`token`]: PASETO v4.public subscription tokens signed with Ed25519,
+//!     carrying verifiable quota + expiry. A client cannot forge remaining
+//!     time/bytes.
 //!   - [`audit`]: an append-only, hash-chained (Merkle-style) audit log so any
 //!     unauthorized DB edit is cryptographically detectable.
 //!   - [`replay`]: replay protection for token refresh via rotating HMAC tokens
@@ -33,5 +34,6 @@ pub mod error;
 pub mod merkle;
 pub mod replay;
 pub mod token;
+pub mod zkp;
 
 pub use error::AntiForgeryError;

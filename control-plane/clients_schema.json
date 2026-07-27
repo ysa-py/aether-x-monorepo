@@ -4,92 +4,130 @@
     {
       "id": "hiddify",
       "displayName": "Hiddify",
-      "platforms": ["android", "ios", "windows", "macos", "linux"],
+      "platforms": [
+        "android",
+        "ios",
+        "windows",
+        "macos",
+        "linux"
+      ],
       "scheme": "hiddify://install-sub?url={encoded_url}#{name}",
-      "status": "confirmed",
-      "sourceCheckedAt": "2026-07-24",
+      "status": "verify-before-ship",
+      "note": "No external application import test is recorded in this repository.",
       "icon": "🛡️"
     },
     {
       "id": "v2rayng",
       "displayName": "v2rayNG",
-      "platforms": ["android"],
+      "platforms": [
+        "android"
+      ],
       "scheme": "v2rayng://install-sub?url={encoded_url}&name={name}",
-      "status": "confirmed",
-      "sourceCheckedAt": "2026-07-24",
+      "status": "verify-before-ship",
+      "note": "No external application import test is recorded in this repository.",
       "icon": "🚀"
     },
     {
       "id": "shadowrocket",
       "displayName": "Shadowrocket",
-      "platforms": ["ios"],
+      "platforms": [
+        "ios"
+      ],
       "scheme": "sub://{base64_url}",
-      "status": "confirmed",
-      "sourceCheckedAt": "2026-07-24",
-      "note": "base64, not URL-encoded",
+      "status": "verify-before-ship",
+      "note": "No external application import test is recorded in this repository; template expects base64, not URL-encoded input.",
       "icon": "🚀"
     },
     {
       "id": "v2raytun",
       "displayName": "v2RayTun",
-      "platforms": ["android", "ios", "windows", "macos"],
+      "platforms": [
+        "android",
+        "ios",
+        "windows",
+        "macos"
+      ],
       "scheme": "v2raytun://import/{url}",
-      "status": "confirmed",
-      "sourceCheckedAt": "2026-07-24",
+      "status": "verify-before-ship",
+      "note": "No external application import test is recorded in this repository.",
       "icon": "🌐"
     },
     {
       "id": "clash",
       "displayName": "Clash / Mihomo / FlClash",
-      "platforms": ["android", "windows", "macos", "linux"],
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux"
+      ],
       "scheme": "clash://install-config?url={encoded_url}&name={name}",
-      "status": "confirmed",
-      "sourceCheckedAt": "2026-07-24",
+      "status": "verify-before-ship",
+      "note": "CI run 30266875057: Mihomo v1.19.29 accepted the generated VLESS-over-WebSocket YAML. FlClash/ClashX app import and connection remain unproven.",
       "icon": "⚡"
     },
     {
       "id": "clashx",
       "displayName": "ClashX",
-      "platforms": ["macos"],
+      "platforms": [
+        "macos"
+      ],
       "scheme": "clashx://install-config?url={encoded_url}",
-      "status": "confirmed",
-      "sourceCheckedAt": "2026-07-24",
+      "status": "verify-before-ship",
+      "note": "No external application import test is recorded in this repository.",
       "icon": "🍎"
     },
     {
       "id": "karing",
       "displayName": "Karing",
-      "platforms": ["ios", "android", "windows", "macos"],
+      "platforms": [
+        "ios",
+        "android",
+        "windows",
+        "macos"
+      ],
       "scheme": null,
       "status": "verify-before-ship",
-      "note": "Supports Clash/sing-box/V2Ray import; no confirmed custom scheme",
+      "note": "Import behavior and any custom scheme require an external application test before shipping.",
       "icon": "🛡️"
     },
     {
       "id": "nekobox",
       "displayName": "NekoBox",
-      "platforms": ["android", "windows", "macos", "linux"],
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux"
+      ],
       "scheme": null,
       "status": "verify-before-ship",
-      "note": "Accepts manual subscription-URL paste; no confirmed deep-link",
+      "note": "Manual import behavior and any deep-link require an external application test before shipping.",
       "icon": "🐱"
     },
     {
       "id": "streisand",
       "displayName": "Streisand",
-      "platforms": ["ios"],
+      "platforms": [
+        "ios"
+      ],
       "scheme": null,
       "status": "verify-before-ship",
-      "note": "Check current App Store listing",
+      "note": "Availability and import behavior require an external application test before shipping.",
       "icon": "🎵"
     },
     {
       "id": "singbox",
       "displayName": "Sing-box (official)",
-      "platforms": ["android", "windows", "macos", "linux"],
+      "platforms": [
+        "android",
+        "windows",
+        "macos",
+        "linux"
+      ],
       "scheme": null,
-      "status": "verify-before-ship",
-      "note": "Accepts manual subscription-URL paste",
+      "status": "ci-parser-validated",
+      "note": "CI run 30266875057: sing-box v1.13.14 accepted the generated VLESS-over-WebSocket JSON. App import and connection remain unproven.",
       "icon": "📦"
     }
   ]

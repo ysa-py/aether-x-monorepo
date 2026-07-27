@@ -12,11 +12,12 @@ import (
 // streamSettings.security. Each profile carries a JSON Schema snippet the admin
 // form is generated from — schema-driven, not one hand-built form per transport.
 //
-// Adding a transport years from now = one entry here (zero Rust changes, since
-// core-supervisor's ProtocolSpec.opaque_config is opaque to it and passed
-// straight through to xray-core / sing-box, which already implement the wire
-// protocol). Deprecated transports are retained (never deleted) so no capability
-// is ever lost.
+// Adding a transport here changes the admin form schema only. It does not
+// configure a running core or prove a subscriber can parse the generated
+// output. Each core/version/profile combination needs an external-core parser
+// and authorized end-to-end test before publication. Deprecated entries are
+// retained (never deleted) so an existing schema capability is not silently
+// removed.
 func Profiles() []model.TransportProfile {
 	return append(xrayProfiles(), singboxProfiles()...)
 }

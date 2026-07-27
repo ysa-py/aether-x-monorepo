@@ -4,26 +4,27 @@
 //! internet access is cut, what still works — and where is the limit no
 //! software can cross?"*
 //!
-//! A censor that severs international IP routing while DNS still resolves
-//! internationally leaves a rideable path: the Tor pluggable transports and
-//! DNS tunnels in [`crate::resilience`] can still reach the open internet. But
-//! the moment international DNS resolution itself is severed, those paths die
-//! too — there is nothing left to ride. That is the **hard bound**: no
-//! software defeats a fully severed international reachability layer. Past it,
-//! the only thing that stays "online" is a domestically-reachable bridge on
-//! the national intranet (domestic content only, not the open internet).
+//! If a censor severs international IP routing while DNS still resolves
+//! internationally, an independently deployed and verified tunnel might have a
+//! remaining path. This module only models that conditional decision; it does
+//! not establish such a tunnel. If international DNS resolution is also severed,
+//! there is nothing for software-only transport to ride. That is the **hard
+//! bound**: no software defeats a fully severed international reachability
+//! layer. Past it, only a separately deployed domestically reachable bridge can
+//! serve domestic content; it is not open-Internet connectivity.
 //!
 //! What this module actually delivers (and does not over-promise):
-//!   - **Detect** the isolation level in milliseconds from probe + DPI signals.
-//!   - **Morph** traffic to the most-whitelisted Iranian-domestic profile as
-//!     isolation deepens (Aparat VOD → SHAPARAK banking TLS), via the AI
-//!     [`crate::ai_dpi::TrafficMorpher`].
-//!   - **Escalate** automatically to the surviving tier (PTs → DNS tunnels)
-//!     the instant routing is severed, with zero-perceived-downtime failover
-//!     (the [`crate::failover::FailoverBridge`] swaps active transport in
-//!     < 1 ms, so the user does not feel the cut).
+//!   - **Classify** a caller-supplied signal snapshot deterministically.
+//!   - **Select** a profile name and a model transport ordering as isolation
+//!     deepens; it does not collect probes or mutate live packets itself.
+//!   - **Model** escalation through the in-process resilience registry. The
+//!     registry must be backed by real, independently probed transports before
+//!     this can be treated as an operational failover path.
 //!   - **Report the bound honestly** when even DNS resolution is gone, instead
 //!     of pretending a connection exists that cannot exist.
+//!
+//! The supervisor executable does not construct this controller today. See the
+//! repository continuity audit for the runtime-wiring and integration-test gap.
 
 use crate::ai_dpi::TrafficMorpher;
 use crate::multipath::{MultipathBond, MultipathRacer};
@@ -73,17 +74,24 @@ impl IsolationLevel {
 /// probe results.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BlackoutSignal {
-    /// Windowed TCP RST injection rate.
+    /// Windowed rate of locally observed TCP `ConnectionReset` errors. This is
+    /// a reset candidate, not proof that an on-path censor injected an RST.
     pub tcp_rst_rate: f64,
-    /// Windowed TLS truncation rate.
+    /// Windowed rate of TLS handshakes interrupted after ClientHello
+    /// transmission by EOF or reset; the source does not attribute who closed
+    /// the flow.
     pub tls_trunc_rate: f64,
-    /// Windowed DNS anomaly rate (the signature of DNS-level censorship).
+    /// Windowed rate of pinned DNS-anchor responses that disagree with their
+    /// expected answer/response code.
     pub dns_anomaly_rate: f64,
-    /// Is international IP routing severed (can't route to international IPs)?
+    /// Conservative windowed indication that every configured international TCP
+    /// anchor failed; it is not a claim of nationwide route visibility.
     pub international_ip_severed: bool,
-    /// Does DNS still resolve international names (a path a DNS tunnel can ride)?
+    /// Whether at least one pinned direct DNS anchor returned an expected answer
+    /// in the current window.
     pub dns_resolves_international: bool,
-    /// Is the national intranet itself up (domestic bridge reachable)?
+    /// Whether an operator-designated domestic TCP anchor accepted a connection
+    /// in the current window.
     pub domestic_intranet_up: bool,
 }
 
@@ -131,15 +139,16 @@ pub fn international_surviving_paths(level: IsolationLevel) -> &'static [&'stati
     }
 }
 
-/// The Iranian-domestic traffic profile the morpher should adopt at this level.
-/// Deeper isolation ⇒ a more aggressively-whitelisted domestic profile.
+/// The built-in traffic-shaping profile selected by this model at each level.
+/// The profile names/values are static source data, not measured whitelist
+/// evidence for a particular network.
 #[must_use]
 pub fn recommended_morph_profile(level: IsolationLevel) -> &'static str {
     match level {
         IsolationLevel::Normal => "https-browsing",
         IsolationLevel::DpiBlocking => "aparat-vod",
-        // SHAPARAK banking TLS is among the most fiercely whitelisted domestic
-        // flows; under severed routing it is the best disguise that survives.
+        // This is a deterministic profile-selection policy only. It is not
+        // evidence that the named traffic survives a given network condition.
         IsolationLevel::RoutingSevered | IsolationLevel::FullIsolation => "shaparak-banking",
     }
 }
@@ -294,9 +303,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    fn healthy_dns_only_controller() -> BlackoutController {
-        // Registry with ONLY a healthy MasterDnsVPN tunnel, so escalation
-        // deterministically promotes the DNS tunnel (not a default-available PT).
+    fn configured_dns_lifecycle_controller() -> BlackoutController {
+        // Registry with a lifecycle-marked DNS tunnel but no real configured
+        // connection endpoint. The controller must not promote it solely from
+        // an in-memory health flag.
         let reg = TransportRegistry::new();
         let tunnel = Arc::new(DnsTunnelTransport::spawn(
             DnsTunnelVariant::MasterDnsVpn,
@@ -386,7 +396,7 @@ mod tests {
 
     #[test]
     fn controller_normal_no_escalation_https_morph() {
-        let mut c = healthy_dns_only_controller();
+        let mut c = configured_dns_lifecycle_controller();
         let a = c.react(&BlackoutSignal {
             international_ip_severed: false,
             tcp_rst_rate: 0.1,
@@ -402,8 +412,8 @@ mod tests {
     }
 
     #[test]
-    fn controller_routing_severed_promotes_dns_tunnel_and_morphs_banking() {
-        let mut c = healthy_dns_only_controller();
+    fn controller_routing_severed_refuses_unconnected_dns_tunnel_and_morphs_banking() {
+        let mut c = configured_dns_lifecycle_controller();
         let a = c.react(&BlackoutSignal {
             international_ip_severed: true,
             dns_resolves_international: true,
@@ -413,22 +423,15 @@ mod tests {
             domestic_intranet_up: true,
         });
         assert_eq!(a.level, IsolationLevel::RoutingSevered);
-        assert_eq!(
-            a.promoted_transport.as_deref(),
-            Some("dns-tunnel-masterdns")
-        );
+        assert!(a.promoted_transport.is_none());
         assert_eq!(a.morph_profile, "shaparak-banking");
         assert!(!a.bound_reached);
-        // The user does not feel the cut: the bridge swapped to the DNS tunnel.
-        assert_eq!(
-            c.resilience().bridge().active().name,
-            "dns-tunnel-masterdns"
-        );
+        assert_eq!(c.resilience().bridge().active().name, "primary");
     }
 
     #[test]
     fn controller_full_isolation_reports_the_bound() {
-        let mut c = healthy_dns_only_controller();
+        let mut c = configured_dns_lifecycle_controller();
         let a = c.react(&BlackoutSignal {
             international_ip_severed: true,
             dns_resolves_international: false,
@@ -476,15 +479,16 @@ mod tests {
             domestic_intranet_up: true,
         });
         assert_eq!(a2.level, IsolationLevel::RoutingSevered);
-        // Full tier has WebTunnel available (priority 20) before the DNS tunnels.
-        assert_eq!(a2.promoted_transport.as_deref(), Some("webtunnel"));
+        // The default tier has no configured real endpoint, so classification
+        // must not promote a conceptual transport merely from static eligibility.
+        assert!(a2.promoted_transport.is_none());
     }
 
     #[test]
-    fn react_fast_races_and_bonds_at_routing_severed() {
-        // Full tier: WebTunnel/Snowflake/etc. (PTs, rtt 50) are available by
-        // default; DNS tunnels are not. Racing must pick a fast PT, and the
-        // bond must aggregate every available path for throughput.
+    fn react_fast_does_not_fabricate_unconfigured_connections() {
+        // The full tier registers conceptual transports, but none has an
+        // operator-configured endpoint in this test. A race must report no
+        // winner/bond instead of assigning a static RTT or fake throughput.
         let mut c = BlackoutController::with_full_tier("primary-core");
         let action = c.react_fast(&BlackoutSignal {
             international_ip_severed: true,
@@ -495,14 +499,11 @@ mod tests {
             domestic_intranet_up: true,
         });
         assert_eq!(action.base.level, IsolationLevel::RoutingSevered);
-        // Race winner is a fast pluggable transport (rtt 50), not a DNS tunnel.
-        let winner = action.race_winner.expect("race produced a winner");
-        assert!(["webtunnel", "snowflake", "obfs4", "meek", "conjure"].contains(&winner.as_str()));
-        // Bonded paths = the available tier transports; multiplier > 1.
-        assert!(action.bonded_paths.len() >= 2, "should bond multiple paths");
+        assert!(action.race_winner.is_none());
+        assert!(action.bonded_paths.is_empty());
         assert!(
-            action.throughput_multiplier > 1.0,
-            "bonding must multiply throughput"
+            action.throughput_multiplier.abs() < f64::EPSILON,
+            "no measured connections means no claimed throughput"
         );
     }
 

@@ -86,10 +86,11 @@ fn zero_loss_blackout_escalation_chain() {
     assert_eq!(a1.morph_profile, "aparat-vod");
     assert!(!a1.bound_reached);
 
-    // Routing severed: should escalate to last-resort tier (webtunnel etc)
+    // Routing severed with no configured endpoint must not fabricate a tier
+    // promotion. A real configured transport is covered by resilience tests.
     let a2 = controller.react(&routing_severed_signal());
     assert_eq!(a2.level, IsolationLevel::RoutingSevered);
-    assert!(a2.promoted_transport.is_some());
+    assert!(a2.promoted_transport.is_none());
     assert_eq!(a2.morph_profile, "shaparak-banking");
     assert!(!a2.bound_reached);
 
@@ -338,8 +339,11 @@ fn enterprise_engine_end_to_end_blackout() {
         res_severed.blackout_level,
         aether_supervisor::blackout::IsolationLevel::RoutingSevered
     );
+    // EnterpriseEngine's `race_winner` is its separate Happy-Eyeballs probe
+    // candidate result; the TCP Transport race is covered by real_tcp_connect.
     assert!(res_severed.race_winner.is_some());
-    assert!(res_severed.throughput_multiplier >= 1.0);
+    // The unconfigured blackout transport tier reports no bonded throughput.
+    assert!(res_severed.throughput_multiplier.abs() < f64::EPSILON);
 
     // Full isolation: bound reached, honest reporting (never fake connected)
     let res_full = engine.tick(&full_isolation_signal(), vec![]);

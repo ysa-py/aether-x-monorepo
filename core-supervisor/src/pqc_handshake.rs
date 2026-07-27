@@ -1,402 +1,232 @@
-//! Hybrid Post-Quantum Key Exchange + ECH — X25519 + ML-KEM-768 (Kyber768)
+//! Classical X25519 session-key agreement.
 //!
-//! Defends against "Harvest Now, Decrypt Later" DPI analysis.
-//! Combines X25519 + ML-KEM-768 inside TLS 1.3 / REALITY handshakes with Encrypted Client Hello (ECH)
-//! for complete outer SNI obfuscation. Maintains pre-calculated PQC key pipelines for 0-RTT.
+//! This module formerly labelled a SHA-256/XOR construction as a
+//! "X25519 + ML-KEM-768 hybrid". It never performed X25519, KEM
+//! encapsulation/decapsulation, authenticated ECH, or an actual TLS handshake.
+//! Returning a purported hybrid secret from that construction would be a
+//! dangerous cryptographic claim, so it has been removed.
 //!
-//! Hybrid: shared_secret = HKDF(X25519_secret || ML-KEM_secret)
-//! ECH: outer SNI = whitelisted domestic (e.g. digikala.com), inner SNI encrypted with ECH public key
-//! 0-RTT pipeline: pre-generated keypairs and shared secrets cached for instant handshake
+//! The available path is now genuine X25519 (`x25519-dalek`) followed by
+//! HKDF-SHA-256. It rejects the all-zero X25519 result in constant time. ML-KEM
+//! is explicitly [`PostQuantumStatus::NotConfigured`]: as of 2026-07-27 the
+//! maintained RustCrypto `ml-kem` crate documents that it has never received an
+//! independent audit, so it does not meet this deployment's audited-primitive
+//! requirement. ECH is likewise not presented as implemented here; it belongs
+//! in a TLS stack that can perform the complete, authenticated ECH handshake.
+//!
+//! This is a key-agreement primitive, not a network protocol. A caller must
+//! bind the resulting key to an authenticated transport handshake before using
+//! it for application traffic.
 
-use parking_lot::RwLock;
-use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use hkdf::Hkdf;
+use rand::{rngs::OsRng, RngCore};
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
+use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::{Zeroize, Zeroizing};
 
-/// Mock X25519 keypair
-#[derive(Debug, Clone)]
+const HKDF_SALT: &[u8] = b"AETHER-X/X25519/session-key/v1";
+const HKDF_INFO: &[u8] = b"AETHER-X authenticated transport session";
+
+/// The honest deployment status of the requested post-quantum component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostQuantumStatus {
+    /// No ML-KEM key, ciphertext, or claimed hybrid secret is produced.
+    NotConfigured,
+}
+
+/// An X25519 static key pair whose secret key is zeroized on drop by
+/// `x25519-dalek`'s `zeroize` feature.
 pub struct X25519Keypair {
-    pub private: [u8; 32],
-    pub public: [u8; 32],
+    private: StaticSecret,
+    public: PublicKey,
+}
+
+impl std::fmt::Debug for X25519Keypair {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("X25519Keypair")
+            .field("public", &self.public.to_bytes())
+            .field("private", &"***OMITTED***")
+            .finish()
+    }
 }
 
 impl X25519Keypair {
+    /// Generate a key pair from the operating system CSPRNG.
+    pub fn generate() -> Result<Self, PqcError> {
+        let mut secret_bytes = Zeroizing::new([0_u8; 32]);
+        OsRng
+            .try_fill_bytes(secret_bytes.as_mut())
+            .map_err(|_| PqcError::RandomnessUnavailable)?;
+        Ok(Self::from_secret_bytes(*secret_bytes))
+    }
+
+    /// Construct a key pair from operator-provisioned secret bytes.
+    ///
+    /// This exists for protected key-store integration. Callers must pass an
+    /// unpredictable secret from a secure key store, not a counter or test
+    /// seed. The `StaticSecret` type clamps the scalar as required by RFC 7748.
     #[must_use]
-    pub fn from_seed(seed: u64) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(seed.to_be_bytes());
-        hasher.update(b"x25519-seed");
-        let hash = hasher.finalize();
-        let mut private = [0u8; 32];
-        private.copy_from_slice(&hash[0..32]);
-        private[0] &= 248;
-        private[31] &= 127;
-        private[31] |= 64;
-        let mut hasher2 = Sha256::new();
-        hasher2.update(private);
-        let pub_hash = hasher2.finalize();
-        let mut public = [0u8; 32];
-        public.copy_from_slice(&pub_hash[0..32]);
+    pub fn from_secret_bytes(secret_bytes: [u8; 32]) -> Self {
+        let private = StaticSecret::from(secret_bytes);
+        let public = PublicKey::from(&private);
         Self { private, public }
     }
 
+    /// Return the encoded X25519 public key.
     #[must_use]
-    pub fn ecdh(&self, peer_public: &[u8; 32]) -> [u8; 32] {
-        // This deterministic test implementation must preserve the essential
-        // X25519 invariant: each peer derives the same value. Hashing a
-        // private key and peer public key was order-dependent, which made the
-        // client and server produce unrelated "shared" secrets. Bind a domain
-        // separator to a canonical ordering of the two public keys instead.
-        let (first, second) = if self.public <= *peer_public {
-            (&self.public, peer_public)
-        } else {
-            (peer_public, &self.public)
-        };
-        let mut hasher = Sha256::new();
-        hasher.update(b"aether-x mock x25519 shared secret v1");
-        hasher.update(first);
-        hasher.update(second);
-        let h = hasher.finalize();
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&h[0..32]);
-        out
+    pub fn public_key(&self) -> [u8; 32] {
+        self.public.to_bytes()
     }
-}
 
-/// Mock ML-KEM-768 keypair
-#[derive(Debug, Clone)]
-pub struct MlKem768Keypair {
-    pub public: Vec<u8>,
-    pub private: Vec<u8>,
-}
-
-impl MlKem768Keypair {
-    #[must_use]
-    pub fn from_seed(seed: u64) -> Self {
-        let mut public = vec![0u8; 1184];
-        let mut private = vec![0u8; 2400];
-        let mut hasher = Sha256::new();
-        hasher.update(seed.to_be_bytes());
-        hasher.update(b"ml-kem-768-public");
-        let h = hasher.finalize();
-        for (i, b) in public.iter_mut().enumerate() {
-            *b = h[i % 32].wrapping_add((i % 256) as u8);
+    /// Derive a session key from a peer's RFC 7748 X25519 public key.
+    pub fn agree(&self, peer_public: &[u8; 32]) -> Result<[u8; 32], PqcError> {
+        let peer = PublicKey::from(*peer_public);
+        let mut shared = Zeroizing::new(*self.private.diffie_hellman(&peer).as_bytes());
+        if bool::from(shared.ct_eq(&[0_u8; 32])) {
+            shared.zeroize();
+            return Err(PqcError::LowOrderPublicKey);
         }
-        let mut hasher2 = Sha256::new();
-        hasher2.update(seed.to_be_bytes());
-        hasher2.update(b"ml-kem-768-private");
-        let h2 = hasher2.finalize();
-        for (i, b) in private.iter_mut().enumerate() {
-            *b = h2[i % 32].wrapping_add((i % 256) as u8);
-        }
-        Self { public, private }
-    }
 
-    #[must_use]
-    pub fn encapsulate(&self, peer_public: &[u8]) -> (Vec<u8>, [u8; 32]) {
-        let mut hasher = Sha256::new();
-        hasher.update(peer_public);
-        hasher.update(b"ml-kem-encaps");
-        let shared_hash = hasher.finalize();
-        let mut shared = [0u8; 32];
-        shared.copy_from_slice(&shared_hash[0..32]);
-        let mut ct = vec![0u8; 1088];
-        for (i, b) in ct.iter_mut().enumerate() {
-            *b = shared[i % 32].wrapping_add((i % 256) as u8);
-        }
-        (ct, shared)
-    }
-
-    #[must_use]
-    pub fn decapsulate(&self, _ciphertext: &[u8]) -> [u8; 32] {
-        // Keep the deterministic stand-in symmetric with `encapsulate`.
-        // Real ML-KEM derives this from the ciphertext and private key; the
-        // mock's public-key-derived secret is only for protocol tests.
-        let mut hasher = Sha256::new();
-        hasher.update(&self.public);
-        hasher.update(b"ml-kem-encaps");
-        let h = hasher.finalize();
-        let mut shared = [0u8; 32];
-        shared.copy_from_slice(&h[0..32]);
-        shared
+        let hkdf = Hkdf::<Sha256>::new(Some(HKDF_SALT), shared.as_ref());
+        let mut session_key = [0_u8; 32];
+        hkdf.expand(HKDF_INFO, &mut session_key)
+            .map_err(|_| PqcError::KeyDerivationFailed)?;
+        shared.zeroize();
+        Ok(session_key)
     }
 }
 
-fn hkdf_derive(x25519_secret: &[u8; 32], mlkem_secret: &[u8; 32], info: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(x25519_secret);
-    hasher.update(mlkem_secret);
-    let prk = hasher.finalize();
-    let mut hasher2 = Sha256::new();
-    hasher2.update(prk);
-    hasher2.update(info);
-    hasher2.update([0x01]);
-    let okm = hasher2.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&okm[0..32]);
-    out
-}
-
-/// ECH (Encrypted Client Hello) config — outer SNI obfuscation
-#[derive(Debug, Clone)]
-pub struct EchConfig {
-    pub outer_sni: String, // whitelisted domestic, e.g. www.digikala.com
-    pub inner_sni: String, // real SNI encrypted, e.g. core.aether-x.example
-    pub public_name: String,
-    pub ech_public_key: Vec<u8>, // ECH public key for HPKE
-}
-
-impl EchConfig {
-    pub fn new(outer_sni: &str, inner_sni: &str) -> Self {
-        // Mock ECH public key deterministic
-        let mut hasher = Sha256::new();
-        hasher.update(outer_sni.as_bytes());
-        hasher.update(inner_sni.as_bytes());
-        hasher.update(b"ech-public-key");
-        let h = hasher.finalize();
-        let mut pubkey = vec![0u8; 32];
-        pubkey.copy_from_slice(&h[0..32]);
-        Self {
-            outer_sni: outer_sni.to_string(),
-            inner_sni: inner_sni.to_string(),
-            public_name: outer_sni.to_string(),
-            ech_public_key: pubkey,
-        }
-    }
-
-    #[must_use]
-    pub fn encrypt_inner_sni(&self, inner_sni: &str) -> Vec<u8> {
-        // Mock HPKE encryption: XOR with public key
-        inner_sni
-            .as_bytes()
-            .iter()
-            .enumerate()
-            .map(|(i, &b)| b ^ self.ech_public_key[i % 32])
-            .collect()
-    }
-
-    #[must_use]
-    pub fn decrypt_inner_sni(&self, encrypted: &[u8]) -> Result<String, PqcError> {
-        let decrypted: Vec<u8> = encrypted
-            .iter()
-            .enumerate()
-            .map(|(i, &b)| b ^ self.ech_public_key[i % 32])
-            .collect();
-        String::from_utf8(decrypted).map_err(|_| PqcError::EchDecryptFailed)
-    }
-}
-
-/// Pre-calculated PQC key pipeline for 0-RTT
-#[derive(Debug, Clone)]
-pub struct PqcPipelineEntry {
-    pub x25519_public: [u8; 32],
-    pub mlkem_ciphertext: Vec<u8>,
-    pub hybrid_secret: [u8; 32],
-    pub created_at: Instant,
-    pub used: bool,
-}
-
-/// PQC Handshake with ECH and 0-RTT pipeline
+/// Compatibility owner for the former PQC handshake entry point.
+///
+/// Its wire bundle now contains only a real X25519 public key. `mlkem_ciphertext`
+/// is retained as an empty field solely so legacy callers can distinguish
+/// `NotConfigured` from a valid KEM ciphertext; it is never generated or
+/// accepted as a cryptographic value.
 #[derive(Debug)]
 pub struct PqcHandshake {
     x25519: X25519Keypair,
-    mlkem: MlKem768Keypair,
-    ech: RwLock<Option<EchConfig>>,
-    pipeline: RwLock<VecDeque<PqcPipelineEntry>>,
-    pipeline_size: usize,
-    handshakes: AtomicU64,
-    zero_rtt_hits: AtomicU64,
+    handshakes: std::sync::atomic::AtomicU64,
 }
 
 impl PqcHandshake {
+    /// Generate a fresh X25519 key agreement identity from OS randomness.
+    pub fn generate() -> Result<Self, PqcError> {
+        Ok(Self {
+            x25519: X25519Keypair::generate()?,
+            handshakes: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    /// Construct from protected 32-byte key material.
     #[must_use]
-    pub fn from_seed(seed: u64) -> Self {
+    pub fn from_secret_bytes(secret_bytes: [u8; 32]) -> Self {
         Self {
-            x25519: X25519Keypair::from_seed(seed),
-            mlkem: MlKem768Keypair::from_seed(seed),
-            ech: RwLock::new(None),
-            pipeline: RwLock::new(VecDeque::with_capacity(10)),
-            pipeline_size: 10,
-            handshakes: AtomicU64::new(0),
-            zero_rtt_hits: AtomicU64::new(0),
+            x25519: X25519Keypair::from_secret_bytes(secret_bytes),
+            handshakes: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
-    pub fn set_ech(&self, cfg: EchConfig) {
-        *self.ech.write() = Some(cfg);
-    }
-
+    /// The real X25519 public key that a peer must receive.
     #[must_use]
-    pub fn ech_config(&self) -> Option<EchConfig> {
-        self.ech.read().clone()
+    pub fn public_key(&self) -> [u8; 32] {
+        self.x25519.public_key()
     }
 
+    /// Report the PQC state without fabricating a hybrid capability.
     #[must_use]
-    pub fn public_keys(&self) -> (Vec<u8>, Vec<u8>) {
-        (self.x25519.public.to_vec(), self.mlkem.public.clone())
+    pub const fn post_quantum_status(&self) -> PostQuantumStatus {
+        PostQuantumStatus::NotConfigured
     }
 
-    /// Pre-calculate pipeline for 0-RTT: generate N keypair bundles in advance
-    pub fn precalculate_pipeline(
-        &self,
-        server_x_pub: &[u8; 32],
-        server_mlkem_pub: &[u8],
-        count: usize,
-    ) {
-        let mut pipeline = self.pipeline.write();
-        pipeline.clear();
-        for i in 0..count.min(self.pipeline_size) {
-            // Use seed + i for variation
-            let temp_kp = X25519Keypair::from_seed(i as u64 + 1000);
-            let x_secret = temp_kp.ecdh(server_x_pub);
-            let mut hasher = Sha256::new();
-            hasher.update(server_mlkem_pub);
-            hasher.update(b"ml-kem-encaps");
-            let decap_mock = hasher.finalize();
-            let mut mlkem_secret = [0u8; 32];
-            mlkem_secret.copy_from_slice(&decap_mock[0..32]);
-            let hybrid = hkdf_derive(&x_secret, &mlkem_secret, b"aether-x hybrid pqc 0-rtt");
-            let dummy = MlKem768Keypair::from_seed(0);
-            let (ct, _) = dummy.encapsulate(server_mlkem_pub);
-            pipeline.push_back(PqcPipelineEntry {
-                x25519_public: temp_kp.public,
-                mlkem_ciphertext: ct,
-                hybrid_secret: hybrid,
-                created_at: Instant::now(),
-                used: false,
-            });
-        }
-    }
-
-    /// Get 0-RTT entry if available (pre-calculated)
-    pub fn get_0rtt(&self) -> Option<PqcPipelineEntry> {
-        let mut pipeline = self.pipeline.write();
-        // Find unused, not expired (>5 min)
-        let now = Instant::now();
-        pipeline.retain(|e| !e.used && now.duration_since(e.created_at) < Duration::from_secs(300));
-        // A consumed precomputed entry must leave the queue. Retaining it as
-        // `used` made pipeline_len() report stale keys and risks accidental
-        // re-use if this implementation later changes its filtering logic.
-        let mut entry = pipeline.pop_front()?;
-        entry.used = true;
-        self.zero_rtt_hits.fetch_add(1, Ordering::Relaxed);
-        Some(entry)
-    }
-
+    /// Start a real X25519 agreement.
+    ///
+    /// A non-empty ML-KEM public key is rejected instead of being hashed into a
+    /// fabricated hybrid secret. Deployments needing PQC must not silently
+    /// downgrade this error; they must integrate an independently audited KEM.
     pub fn client_handshake(
         &self,
-        server_x25519_pub: &[u8; 32],
-        server_mlkem_pub: &[u8],
+        server_x25519_public: &[u8; 32],
+        server_mlkem_public: &[u8],
     ) -> Result<(PqcCiphertextBundle, [u8; 32]), PqcError> {
-        if server_mlkem_pub.len() != 1184 {
-            return Err(PqcError::InvalidPublicKey);
+        if !server_mlkem_public.is_empty() {
+            return Err(PqcError::PostQuantumNotConfigured);
         }
-
-        // Try 0-RTT pipeline first
-        if let Some(entry) = self.get_0rtt() {
-            let bundle = PqcCiphertextBundle {
-                x25519_public: entry.x25519_public,
-                mlkem_ciphertext: entry.mlkem_ciphertext,
-                ech_encrypted_inner: self
-                    .ech
-                    .read()
-                    .as_ref()
-                    .map(|ech| ech.encrypt_inner_sni(&ech.inner_sni)),
-            };
-            return Ok((bundle, entry.hybrid_secret));
-        }
-
-        // Normal handshake
-        let x_secret = self.x25519.ecdh(server_x25519_pub);
-        let dummy_kp = MlKem768Keypair::from_seed(0);
-        let _ = dummy_kp.encapsulate(server_mlkem_pub);
-        let mut hasher = Sha256::new();
-        hasher.update(server_mlkem_pub);
-        hasher.update(b"ml-kem-encaps");
-        let decap_mock = hasher.finalize();
-        let mut mlkem_secret_deterministic = [0u8; 32];
-        mlkem_secret_deterministic.copy_from_slice(&decap_mock[0..32]);
-        let hybrid = hkdf_derive(
-            &x_secret,
-            &mlkem_secret_deterministic,
-            b"aether-x hybrid pqc",
-        );
-        let (mlkem_ct, _) = dummy_kp.encapsulate(server_mlkem_pub);
-        let bundle = PqcCiphertextBundle {
-            x25519_public: self.x25519.public,
-            mlkem_ciphertext: mlkem_ct,
-            ech_encrypted_inner: self
-                .ech
-                .read()
-                .as_ref()
-                .map(|ech| ech.encrypt_inner_sni(&ech.inner_sni)),
-        };
-        self.handshakes.fetch_add(1, Ordering::Relaxed);
-        Ok((bundle, hybrid))
+        let session_key = self.x25519.agree(server_x25519_public)?;
+        self.handshakes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok((
+            PqcCiphertextBundle {
+                x25519_public: self.x25519.public_key(),
+                mlkem_ciphertext: Vec::new(),
+                ech_encrypted_inner: None,
+            },
+            session_key,
+        ))
     }
 
+    /// Complete a real X25519 agreement.
     pub fn server_handshake(
         &self,
         client_bundle: &PqcCiphertextBundle,
     ) -> Result<[u8; 32], PqcError> {
-        if client_bundle.mlkem_ciphertext.len() != 1088 {
-            return Err(PqcError::InvalidCiphertext);
+        if !client_bundle.mlkem_ciphertext.is_empty() || client_bundle.ech_encrypted_inner.is_some()
+        {
+            return Err(PqcError::PostQuantumNotConfigured);
         }
-        let x_secret = self.x25519.ecdh(&client_bundle.x25519_public);
-        let mlkem_secret = self.mlkem.decapsulate(&client_bundle.mlkem_ciphertext);
-        let hybrid = hkdf_derive(&x_secret, &mlkem_secret, b"aether-x hybrid pqc");
-
-        // Verify ECH if present
-        if let Some(encrypted_inner) = &client_bundle.ech_encrypted_inner {
-            if let Some(ech) = self.ech.read().as_ref() {
-                let _decrypted = ech.decrypt_inner_sni(encrypted_inner)?;
-                // In real, would verify inner SNI matches expected
-            }
-        }
-
-        self.handshakes.fetch_add(1, Ordering::Relaxed);
-        Ok(hybrid)
+        let session_key = self.x25519.agree(&client_bundle.x25519_public)?;
+        self.handshakes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(session_key)
     }
 
+    /// Number of successful X25519 operations performed by this owner.
     #[must_use]
     pub fn handshakes_done(&self) -> u64 {
-        self.handshakes.load(Ordering::Relaxed)
-    }
-
-    #[must_use]
-    pub fn zero_rtt_hits(&self) -> u64 {
-        self.zero_rtt_hits.load(Ordering::Relaxed)
-    }
-
-    #[must_use]
-    pub fn pipeline_len(&self) -> usize {
-        self.pipeline.read().len()
+        self.handshakes.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
-#[derive(Debug, Clone)]
+/// Compatibility wire container for an X25519 agreement request.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PqcCiphertextBundle {
+    /// The client X25519 public key.
     pub x25519_public: [u8; 32],
+    /// Always empty while ML-KEM is not configured; a non-empty value is
+    /// rejected by [`PqcHandshake::server_handshake`].
     pub mlkem_ciphertext: Vec<u8>,
+    /// Always `None`: no userspace XOR construction is treated as ECH.
     pub ech_encrypted_inner: Option<Vec<u8>>,
 }
 
+/// Failure modes for key agreement and unavailable PQC features.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PqcError {
-    InvalidPublicKey,
-    InvalidCiphertext,
-    HandshakeFailed,
-    EchDecryptFailed,
+    /// The operating system CSPRNG was unavailable.
+    RandomnessUnavailable,
+    /// A peer supplied a low-order X25519 public key, yielding all-zero shared material.
+    LowOrderPublicKey,
+    /// HKDF could not produce the requested output length.
+    KeyDerivationFailed,
+    /// ML-KEM or ECH input was requested while no audited implementation is configured.
+    PostQuantumNotConfigured,
 }
 
 impl std::fmt::Display for PqcError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidPublicKey => write!(f, "invalid pqc public key"),
-            Self::InvalidCiphertext => write!(f, "invalid pqc ciphertext"),
-            Self::HandshakeFailed => write!(f, "pqc handshake failed"),
-            Self::EchDecryptFailed => write!(f, "ech decrypt failed"),
+            Self::RandomnessUnavailable => {
+                write!(formatter, "operating-system randomness unavailable")
+            }
+            Self::LowOrderPublicKey => write!(
+                formatter,
+                "X25519 peer key produced an all-zero shared secret"
+            ),
+            Self::KeyDerivationFailed => write!(formatter, "HKDF session-key derivation failed"),
+            Self::PostQuantumNotConfigured => {
+                write!(formatter, "ML-KEM and ECH are not configured")
+            }
         }
     }
 }
@@ -406,93 +236,74 @@ impl std::error::Error for PqcError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use x25519_dalek::x25519;
 
-    #[test]
-    fn hybrid_handshake_shared_secret_matches() {
-        let client = PqcHandshake::from_seed(1);
-        let server = PqcHandshake::from_seed(2);
-        let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
-        let mut server_x_pub = [0u8; 32];
-        server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-        let (bundle, client_secret) = client
-            .client_handshake(&server_x_pub, &server_ml_pub)
-            .unwrap();
-        let server_secret = server.server_handshake(&bundle).unwrap();
-        assert_eq!(client_secret, server_secret);
+    fn bytes_from_hex(input: &str) -> [u8; 32] {
+        let mut output = [0_u8; 32];
+        for (index, pair) in input.as_bytes().chunks_exact(2).enumerate() {
+            let pair = std::str::from_utf8(pair).unwrap();
+            output[index] = u8::from_str_radix(pair, 16).unwrap();
+        }
+        output
     }
 
     #[test]
-    fn ech_obfuscates_inner_sni() {
-        let ech = EchConfig::new("www.digikala.com", "core.aether-x.example");
-        let encrypted = ech.encrypt_inner_sni("core.aether-x.example");
-        assert_ne!(encrypted, b"core.aether-x.example");
-        let decrypted = ech.decrypt_inner_sni(&encrypted).unwrap();
-        assert_eq!(decrypted, "core.aether-x.example");
+    fn rfc7748_x25519_official_vector() {
+        let scalar =
+            bytes_from_hex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4");
+        let point =
+            bytes_from_hex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c");
+        let expected =
+            bytes_from_hex("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552");
+        assert_eq!(x25519(scalar, point), expected);
     }
 
     #[test]
-    fn pqc_with_ech() {
-        let client = PqcHandshake::from_seed(1);
-        let server = PqcHandshake::from_seed(2);
-        client.set_ech(EchConfig::new("www.digikala.com", "core.aether-x.example"));
-        server.set_ech(EchConfig::new("www.digikala.com", "core.aether-x.example"));
-
-        let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
-        let mut server_x_pub = [0u8; 32];
-        server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-
-        let (bundle, client_secret) = client
-            .client_handshake(&server_x_pub, &server_ml_pub)
-            .unwrap();
-        assert!(bundle.ech_encrypted_inner.is_some());
-
-        let server_secret = server.server_handshake(&bundle).unwrap();
-        assert_eq!(client_secret, server_secret);
+    fn rfc5869_hkdf_sha256_official_vector() {
+        // RFC 5869, Appendix A.1 (SHA-256 test case 1).
+        let ikm = [0x0b_u8; 22];
+        let salt = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+        ];
+        let info = [0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9];
+        let expected = [
+            0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
+            0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
+            0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65,
+        ];
+        let hkdf = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+        let mut actual = [0_u8; 42];
+        hkdf.expand(&info, &mut actual).unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]
-    fn zero_rtt_pipeline() {
-        let client = PqcHandshake::from_seed(1);
-        let server = PqcHandshake::from_seed(2);
-        let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
-        let mut server_x_pub = [0u8; 32];
-        server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-
-        client.precalculate_pipeline(&server_x_pub, &server_ml_pub, 5);
-        assert_eq!(client.pipeline_len(), 5);
-
-        // First handshake should hit 0-RTT pipeline
-        let (_bundle, _secret) = client
-            .client_handshake(&server_x_pub, &server_ml_pub)
-            .unwrap();
-        assert_eq!(client.zero_rtt_hits(), 1);
-        assert_eq!(client.pipeline_len(), 4); // one used
+    fn real_x25519_agreement_derives_the_same_session_key() {
+        let client = PqcHandshake::generate().unwrap();
+        let server = PqcHandshake::generate().unwrap();
+        let (bundle, client_key) = client.client_handshake(&server.public_key(), &[]).unwrap();
+        let server_key = server.server_handshake(&bundle).unwrap();
+        assert_eq!(client_key, server_key);
+        assert_ne!(client_key, [0_u8; 32]);
     }
 
     #[test]
-    fn invalid_pubkey_error() {
-        let client = PqcHandshake::from_seed(1);
-        let bad_pub = vec![0u8; 100];
-        let server_x_pub = [0u8; 32];
-        let err = client
-            .client_handshake(&server_x_pub, &bad_pub)
-            .unwrap_err();
-        assert_eq!(err, PqcError::InvalidPublicKey);
+    fn low_order_public_key_is_rejected() {
+        let peer = X25519Keypair::generate().unwrap();
+        assert_eq!(peer.agree(&[0_u8; 32]), Err(PqcError::LowOrderPublicKey));
     }
 
     #[test]
-    fn handshake_counter() {
-        let client = PqcHandshake::from_seed(1);
-        let server = PqcHandshake::from_seed(2);
-        assert_eq!(client.handshakes_done(), 0);
-        let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
-        let mut server_x_pub = [0u8; 32];
-        server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-        let (bundle, _) = client
-            .client_handshake(&server_x_pub, &server_ml_pub)
-            .unwrap();
-        assert_eq!(client.handshakes_done(), 1);
-        server.server_handshake(&bundle).unwrap();
-        assert_eq!(server.handshakes_done(), 1);
+    fn nonempty_pqc_input_is_rejected_not_hashed() {
+        let client = PqcHandshake::generate().unwrap();
+        let server = PqcHandshake::generate().unwrap();
+        assert_eq!(
+            client.client_handshake(&server.public_key(), &[0x42]),
+            Err(PqcError::PostQuantumNotConfigured)
+        );
+        assert_eq!(
+            client.post_quantum_status(),
+            PostQuantumStatus::NotConfigured
+        );
     }
 }

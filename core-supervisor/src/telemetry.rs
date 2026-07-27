@@ -10,8 +10,8 @@
 //! When the control plane is *not* attached (blackout, restart, network
 //! partition) a broadcast send has no receiver and the event used to vanish.
 //! A [`Collector`] built with [`Collector::with_store_and_forward`] instead
-//! hands those events to a bounded, disk-backed
-//! [`crate::store_and_forward::StoreAndForward`] queue, and replays them the
+//! hands those events to a bounded queue which is disk-backed only through a
+//! sealed [`crate::store_and_forward::StoreAndForward`] spool, and replays them the
 //! moment a subscriber attaches. This is the same contract as the Go control
 //! plane's `AETHER_TELEMETRY_SPOOL` disk spool
 //! (`control-plane/internal/telemetry/clickhouse.go`): buffer on the floor,
@@ -252,12 +252,16 @@ mod tests {
 
     #[tokio::test]
     async fn spooled_telemetry_survives_a_crash() {
-        use crate::store_and_forward::QueueLimits;
+        use crate::store_and_forward::{Aes256GcmSpoolSealer, QueueLimits, SpoolSealer};
 
+        let sealer: Arc<dyn SpoolSealer> =
+            Arc::new(Aes256GcmSpoolSealer::from_key_bytes([0xA5; 32]).unwrap());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("telemetry-spool.jsonl");
         {
-            let queue = Arc::new(StoreAndForward::open(&path, QueueLimits::default()).unwrap());
+            let queue = Arc::new(
+                StoreAndForward::open(&path, QueueLimits::default(), Arc::clone(&sealer)).unwrap(),
+            );
             let c = Collector::with_store_and_forward(queue);
             c.record(TelemetryEvent {
                 node_id: "survivor".into(),
@@ -265,7 +269,9 @@ mod tests {
             });
             // Crash: no flush, no graceful shutdown.
         }
-        let queue = Arc::new(StoreAndForward::open(&path, QueueLimits::default()).unwrap());
+        let queue = Arc::new(
+            StoreAndForward::open(&path, QueueLimits::default(), Arc::clone(&sealer)).unwrap(),
+        );
         let c = Collector::with_store_and_forward(queue);
         let replayed = c.drain_spooled();
         assert_eq!(replayed.len(), 1);

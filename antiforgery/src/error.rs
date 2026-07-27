@@ -9,6 +9,10 @@ pub enum AntiForgeryError {
     #[error("invalid signature")]
     BadSignature,
 
+    /// PASETO v4 encryption/decryption or key validation failed.
+    #[error("PASETO operation failed: {0}")]
+    Paseto(String),
+
     /// The token bytes were malformed (bad base64, missing '.', bad JSON).
     #[error("malformed token: {0}")]
     Malformed(String),
@@ -52,6 +56,36 @@ pub enum AntiForgeryError {
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+impl AntiForgeryError {
+    /// Map a PASETO implementation error without exposing its concrete type
+    /// through this crate's public error surface.
+    pub fn paseto(error: &pasetors::errors::Error) -> Self {
+        use pasetors::errors::Error;
+
+        let kind = match error {
+            Error::TokenFormat => "token format",
+            Error::Base64 => "base64",
+            Error::TokenValidation => "token validation",
+            Error::Key => "key",
+            Error::Encryption => "encryption",
+            Error::Csprng => "CSPRNG",
+            Error::LossyConversion => "lossy conversion",
+            Error::EmptyPayload => "empty payload",
+            Error::InvalidClaim => "invalid claim",
+            Error::ClaimValidation(_) => "claim validation",
+            Error::ClaimInvalidUtf8 => "claim UTF-8",
+            Error::ClaimInvalidJson => "claim JSON",
+            Error::PaserkParsing => "PASERK parsing",
+            Error::Signing => "signing",
+            Error::PublicKeyConversion => "public-key conversion",
+            Error::KeyGeneration => "key generation",
+            Error::PayloadInvalidUtf8 => "payload UTF-8",
+            Error::FooterParsing => "footer parsing",
+        };
+        Self::Paseto(kind.into())
+    }
 }
 
 /// Convenience alias.
