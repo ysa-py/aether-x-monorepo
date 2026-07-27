@@ -96,18 +96,21 @@ pub fn verify(verifying_key: &VerifyingKey, token: &str) -> Result<Claims> {
 /// must provision a distinct 32-byte local key and must never reuse the
 /// Ed25519 signing seed as an encryption key.
 pub fn issue_local(local_key: &[u8; 32], claims: &Claims) -> Result<String> {
-    let key = SymmetricKey::<V4>::from(local_key).map_err(AntiForgeryError::paseto)?;
+    let key =
+        SymmetricKey::<V4>::from(local_key).map_err(|error| AntiForgeryError::paseto(&error))?;
     let payload = serde_json::to_vec(claims)?;
-    LocalToken::encrypt(&key, &payload, None, None).map_err(AntiForgeryError::paseto)
+    LocalToken::encrypt(&key, &payload, None, None)
+        .map_err(|error| AntiForgeryError::paseto(&error))
 }
 
 /// Decrypt and authenticate a PASETO v4.local token.
 pub fn verify_local(local_key: &[u8; 32], token: &str) -> Result<Claims> {
-    let key = SymmetricKey::<V4>::from(local_key).map_err(AntiForgeryError::paseto)?;
-    let untrusted =
-        UntrustedToken::<Local, V4>::try_from(token).map_err(AntiForgeryError::paseto)?;
-    let trusted =
-        LocalToken::decrypt(&key, &untrusted, None, None).map_err(AntiForgeryError::paseto)?;
+    let key =
+        SymmetricKey::<V4>::from(local_key).map_err(|error| AntiForgeryError::paseto(&error))?;
+    let untrusted = UntrustedToken::<Local, V4>::try_from(token)
+        .map_err(|error| AntiForgeryError::paseto(&error))?;
+    let trusted = LocalToken::decrypt(&key, &untrusted, None, None)
+        .map_err(|error| AntiForgeryError::paseto(&error))?;
     Ok(serde_json::from_slice(trusted.payload().as_bytes())?)
 }
 

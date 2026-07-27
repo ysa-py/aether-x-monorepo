@@ -61,7 +61,7 @@ pub enum AntiForgeryError {
 impl AntiForgeryError {
     /// Map a PASETO implementation error without exposing its concrete type
     /// through this crate's public error surface.
-    pub fn paseto(error: pasetors::errors::Error) -> Self {
+    pub fn paseto(error: &pasetors::errors::Error) -> Self {
         use pasetors::errors::Error;
 
         let kind = match error {
