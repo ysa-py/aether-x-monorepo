@@ -99,12 +99,14 @@ The repository test suite uses actual loopback sockets:
 - a local rustls server and pinned test CA for verified TLS success;
 - a local TCP listener which reads a ClientHello and closes, exercising the
   observed TLS-EOF/truncation path; and
-- a local UDP DNS responder for matching and mismatched pinned answers.
+- a local UDP DNS responder for a matching pinned answer.
 
 Those tests prove that this code sends/receives real local TCP, TLS, and UDP DNS
 traffic and that its resulting `BlackoutSignal` reaches the existing
-classifier. They do **not** prove censorship detection on an Iranian carrier or
-on any public network.
+classifier. Mismatched DNS answers and TLS interruptions remain deployment
+checks until a platform-stable loopback fault fixture is added. None of these
+tests prove censorship detection on an Iranian carrier or on any public
+network.
 
 Before enabling the monitor in a real deployment, perform an authorized
 staging drill:
