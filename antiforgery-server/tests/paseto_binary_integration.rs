@@ -142,7 +142,10 @@ async fn connect_with_retry(
     endpoint: &str,
 ) -> Result<AntiForgeryServiceClient<tonic::transport::Channel>, ()> {
     let endpoint = Endpoint::from_shared(endpoint.to_string()).expect("loopback endpoint is valid");
-    for _ in 0..100 {
+    // A debug-built 64-bit Bulletproof initialization/proof is intentionally
+    // allowed a bounded 10 seconds on a loaded CI runner; this is real
+    // cryptographic work, not an artificial immediate success.
+    for _ in 0..500 {
         match AntiForgeryServiceClient::connect(endpoint.clone()).await {
             Ok(client) => return Ok(client),
             Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
