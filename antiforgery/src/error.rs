@@ -62,7 +62,29 @@ impl AntiForgeryError {
     /// Map a PASETO implementation error without exposing its concrete type
     /// through this crate's public error surface.
     pub fn paseto(error: pasetors::errors::Error) -> Self {
-        Self::Paseto(error.to_string())
+        use pasetors::errors::Error;
+
+        let kind = match error {
+            Error::TokenFormat => "token format",
+            Error::Base64 => "base64",
+            Error::TokenValidation => "token validation",
+            Error::Key => "key",
+            Error::Encryption => "encryption",
+            Error::Csprng => "CSPRNG",
+            Error::LossyConversion => "lossy conversion",
+            Error::EmptyPayload => "empty payload",
+            Error::InvalidClaim => "invalid claim",
+            Error::ClaimValidation(_) => "claim validation",
+            Error::ClaimInvalidUtf8 => "claim UTF-8",
+            Error::ClaimInvalidJson => "claim JSON",
+            Error::PaserkParsing => "PASERK parsing",
+            Error::Signing => "signing",
+            Error::PublicKeyConversion => "public-key conversion",
+            Error::KeyGeneration => "key generation",
+            Error::PayloadInvalidUtf8 => "payload UTF-8",
+            Error::FooterParsing => "footer parsing",
+        };
+        Self::Paseto(kind.into())
     }
 }
 
