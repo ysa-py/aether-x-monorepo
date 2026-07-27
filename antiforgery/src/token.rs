@@ -250,23 +250,16 @@ fn split_public_token(token: &str) -> Result<(Vec<u8>, Vec<u8>)> {
     let message = fields.next();
     let footer = fields.next();
 
-    if version != Some("v4")
-        || purpose != Some("public")
-        || message.is_none()
-        || fields.next().is_some()
-    {
+    if version != Some("v4") || purpose != Some("public") || fields.next().is_some() {
         return Err(AntiForgeryError::Malformed(
             "expected a v4.public token with zero or one footer".into(),
         ));
     }
 
-    let encoded_message = match message {
-        Some(value) => value,
-        None => {
-            return Err(AntiForgeryError::Malformed(
-                "v4.public token has no message".into(),
-            ));
-        }
+    let Some(encoded_message) = message else {
+        return Err(AntiForgeryError::Malformed(
+            "v4.public token has no message".into(),
+        ));
     };
     let message = URL_SAFE_NO_PAD.decode(encoded_message)?;
     let footer = match footer {
