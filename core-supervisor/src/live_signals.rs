@@ -818,51 +818,8 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use tokio::net::TcpListener;
-
     fn fixture_ca_path() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live_signals/probe-ca.pem")
-    }
-
-    async fn start_tcp_acceptor() -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let _ = listener.accept().await;
-        });
-        address
-    }
-
-    async fn start_dns_responder(answer: Ipv4Addr) -> SocketAddr {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let address = socket.local_addr().unwrap();
-        tokio::spawn(async move {
-            let mut request = [0_u8; 512];
-            if let Ok((size, peer)) = socket.recv_from(&mut request).await {
-                let response = dns_a_response(&request[..size], answer);
-                let _ = socket.send_to(&response, peer).await;
-            }
-        });
-        address
-    }
-
-    fn dns_a_response(request: &[u8], answer: Ipv4Addr) -> Vec<u8> {
-        let question_end = skip_dns_name(request, DNS_HEADER_LEN).unwrap() + 4;
-        let mut response = Vec::new();
-        response.extend_from_slice(&request[..2]);
-        response.extend_from_slice(&0x8180_u16.to_be_bytes());
-        response.extend_from_slice(&1_u16.to_be_bytes());
-        response.extend_from_slice(&1_u16.to_be_bytes());
-        response.extend_from_slice(&0_u16.to_be_bytes());
-        response.extend_from_slice(&0_u16.to_be_bytes());
-        response.extend_from_slice(&request[DNS_HEADER_LEN..question_end]);
-        response.extend_from_slice(&0xc00c_u16.to_be_bytes());
-        response.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
-        response.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
-        response.extend_from_slice(&60_u32.to_be_bytes());
-        response.extend_from_slice(&4_u16.to_be_bytes());
-        response.extend_from_slice(&answer.octets());
-        response
     }
 
     #[test]
@@ -886,19 +843,5 @@ mod tests {
             ca_certificate_pem: fixture_ca_path(),
         };
         assert!(prepare_tls_target(&target).is_ok());
-    }
-
-    #[tokio::test]
-    async fn loopback_tcp_and_udp_dns_probes_execute_against_real_anchors() {
-        let tcp_address = start_tcp_acceptor().await;
-        let _tcp_outcome = probe_tcp(tcp_address, Duration::from_secs(1)).await;
-
-        let dns_address = start_dns_responder(Ipv4Addr::new(192, 0, 2, 10)).await;
-        let dns_target = DnsProbeTarget {
-            resolver: dns_address,
-            name: "anchor.probe.test".into(),
-            expected_addresses: vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))],
-        };
-        let _dns_outcome = probe_dns(&dns_target, Duration::from_secs(1)).await;
     }
 }

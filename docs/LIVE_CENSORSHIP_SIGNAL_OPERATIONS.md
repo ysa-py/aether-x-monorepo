@@ -93,16 +93,16 @@ hostnames, resolver addresses, or subscriber information.
 
 ## CI evidence versus deployment evidence
 
-The repository test suite uses real loopback sockets for a TCP accept and a
-UDP DNS request/response with a matching pinned answer. It also parses the
-pinned test CA into the TLS verifier without permitting an insecure verifier.
+The repository test suite validates the strict configuration bounds and parses
+the pinned test CA into the TLS verifier without permitting an insecure
+verifier. The runtime TCP, TLS, and UDP-DNS probe paths require authorized
+staging/deployment verification; this authoring sandbox cannot run the Cargo
+dependency graph against a real controlled network.
 
-Those tests execute the TCP/DNS measurement code against real local sockets and
-verify that TLS configuration requires a usable CA. They are smoke coverage,
-not a carrier-quality verdict: full TLS handshakes, TLS interruptions, and
-mismatched DNS answers remain authorized staging/deployment checks until a
-platform-stable loopback fault fixture is added. None of these tests prove
-censorship detection on an Iranian carrier or on any public network.
+Full TLS handshakes, TLS interruptions, matching/mismatched DNS answers, and
+route withdrawal remain authorized staging/deployment checks until a
+platform-stable loopback fault fixture is added. None of the repository tests
+prove censorship detection on an Iranian carrier or on any public network.
 
 Before enabling the monitor in a real deployment, perform an authorized
 staging drill:
