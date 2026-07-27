@@ -49,6 +49,17 @@ impl Lcg {
     }
 }
 
+/// Mix a caller-provided seed with the packet counter without introducing
+/// correlations for sequential seeds. This is the SplitMix64 finalizer; it is
+/// deterministic, inexpensive, and provides enough dispersion for the
+/// non-cryptographic test PRNG below.
+fn mixed_seed(seed: u64, packet_counter: u64) -> u64 {
+    let mut value = seed.wrapping_add(packet_counter.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
+}
+
 /// Poisson sampler via Knuth's algorithm, deterministic per seed.
 /// Returns k ~ Poisson(λ)
 fn poisson_sample(lcg: &mut Lcg, lambda: f64) -> u32 {
@@ -147,7 +158,8 @@ impl ChaffEngine {
     /// Apply chaffing to a packet of `original_len` using `seed` for determinism.
     /// In production seed = connection_id || packet_counter.
     pub fn chaff_packet(&mut self, original_len: u32, seed: u64) -> ChaffedPacket {
-        let mut lcg = Lcg::new(seed ^ self.packets_chaffed.wrapping_add(1));
+        let packet_counter = self.packets_chaffed.wrapping_add(1);
+        let mut lcg = Lcg::new(mixed_seed(seed, packet_counter));
         let padding_raw = poisson_sample(&mut lcg, self.config.lambda);
         let padding = padding_raw.clamp(self.config.min_padding, self.config.max_padding);
 

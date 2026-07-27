@@ -144,7 +144,7 @@ impl AnomalyDetector {
                 AnomalyPrediction::DropImminent
                     | AnomalyPrediction::RisingLoss
                     | AnomalyPrediction::AckStall
-            ) && r.confidence > 0.7
+            ) && r.confidence >= 0.7
         } else {
             false
         }

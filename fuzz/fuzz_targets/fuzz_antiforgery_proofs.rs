@@ -3,8 +3,8 @@
 use libfuzzer_sys::fuzz_target;
 
 // Fuzz the antiforgery token verifier and Merkle proof verifier with arbitrary
-/// bytes. Corrupt signatures, truncated tokens, and malformed proof arrays must
-/// be rejected cleanly without panicking.
+// bytes. Corrupt signatures, truncated tokens, and malformed proof arrays must
+// be rejected cleanly without panicking.
 fuzz_target!(|data: &[u8]| {
     // --- Token verification with arbitrary string input ---
     let sk = aether_antiforgery::token::generate_signing_key();

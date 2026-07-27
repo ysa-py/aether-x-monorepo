@@ -259,9 +259,12 @@ impl EbpfMorphEngine {
         if cfg.window_override != 0 {
             cfg.window_override
         } else {
-            // scale down/up based on factor: simple heuristic
+            // Apply the configured RFC 7323 scale factor. The prior `/ 4`
+            // cancellation meant scale_factor=2 left a window unchanged.
             let factor = 1u32 << cfg.scale_factor.min(6);
-            ((original_window as u32 * factor) / 4).min(u16::MAX as u32) as u16
+            (original_window as u32)
+                .saturating_mul(factor)
+                .min(u16::MAX as u32) as u16
         }
     }
 
