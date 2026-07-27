@@ -97,12 +97,12 @@ The repository test suite uses real loopback sockets for a TCP accept and a
 UDP DNS request/response with a matching pinned answer. It also parses the
 pinned test CA into the TLS verifier without permitting an insecure verifier.
 
-Those tests prove that the TCP/DNS measurement code exchanges real local
-traffic and that the TLS configuration requires a usable CA. Full TLS
-handshakes, TLS interruptions, and mismatched DNS answers remain authorized
-staging/deployment checks until a platform-stable loopback fault fixture is
-added. None of these tests prove censorship detection on an Iranian carrier or
-on any public network.
+Those tests execute the TCP/DNS measurement code against real local sockets and
+verify that TLS configuration requires a usable CA. They are smoke coverage,
+not a carrier-quality verdict: full TLS handshakes, TLS interruptions, and
+mismatched DNS answers remain authorized staging/deployment checks until a
+platform-stable loopback fault fixture is added. None of these tests prove
+censorship detection on an Iranian carrier or on any public network.
 
 Before enabling the monitor in a real deployment, perform an authorized
 staging drill:
