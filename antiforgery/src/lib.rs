@@ -34,5 +34,6 @@ pub mod error;
 pub mod merkle;
 pub mod replay;
 pub mod token;
+pub mod zkp;
 
 pub use error::AntiForgeryError;

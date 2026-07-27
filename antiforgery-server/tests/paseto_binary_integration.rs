@@ -11,6 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use aether_antiforgery::token::{Claims, TokenSigner};
 use tonic::transport::Endpoint;
 
 pub mod aether {
@@ -26,6 +27,10 @@ use aether::antiforgery::v1::{
 };
 
 const TEST_SIGNING_SEED: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+const TEST_SIGNING_SEED_BYTES: [u8; 32] = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+];
 
 #[tokio::test]
 async fn production_binary_issues_and_verifies_a_paseto_v4_public_token() {
@@ -35,9 +40,29 @@ async fn production_binary_issues_and_verifies_a_paseto_v4_public_token() {
     // OS-assigned port avoids a hard-coded port while preserving a real socket.
     drop(listener);
 
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_secs() as i64;
+    // This PASETO comes from Item A's real issuer implementation. The spawned
+    // production binary must verify it, register its commitment, create a real
+    // Bulletproof, and verify that proof before opening its gRPC listener.
+    let zkp_token = TokenSigner::from_secret_bytes(&TEST_SIGNING_SEED_BYTES)
+        .issue(&Claims {
+            subscription_id: "binary-zkp-subscription".into(),
+            user_id: "binary-zkp-user".into(),
+            bytes_total: 10_000,
+            bytes_used: 0,
+            expires_unix: now + 120,
+            issued_unix: now,
+            nonce: "binary-zkp-nonce".into(),
+        })
+        .expect("issue a real PASETO for production ZK validation");
+
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_aether-antiforgery"))
         .env("AETHER_ANTIFORGERY_ADDR", address.to_string())
         .env("AETHER_ANTIFORGERY_SIGNING_KEY", TEST_SIGNING_SEED)
+        .env("AETHER_ANTIFORGERY_ZKP_VERIFY_TOKEN", zkp_token)
         .env("AETHER_MTLS_ENABLED", "false")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -46,10 +71,6 @@ async fn production_binary_issues_and_verifies_a_paseto_v4_public_token() {
 
     let endpoint = format!("http://{address}");
     let mut client = connect_with_retry(&endpoint).await;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is after the Unix epoch")
-        .as_secs() as i64;
     let issued = client
         .issue_token(IssueTokenRequest {
             subscription_id: "binary-e2e-subscription".into(),

@@ -21,6 +21,11 @@ pasetors = { version = "=0.8.0", default-features = false, features = ["v4"] }
 # zeroized after the signing key copies them.
 zeroize = "1.8"
 subtle = "2.6"
+# Real range-proof implementation for the documented issuer-attested expiry
+# statement in docs/zkp-design.md. The exact version is intentional.
+bulletproofs = "=5.0.0"
+curve25519-dalek = { version = "4.1.3", features = ["rand_core", "zeroize"] }
+merlin = "3"
 rand = "0.8"
 sha2 = "0.10"
 hmac = "0.12"

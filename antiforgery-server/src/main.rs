@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         verifying_key = %hex(&signer.verifying_key_bytes()),
         "anti-forgery signing identity loaded"
     );
+    run_zkp_validation_from_environment(&signer)?;
 
     let addr = antiforgery_addr_from_environment()?;
     let mtls_enabled = mtls_enabled_from_environment()?;
@@ -57,6 +58,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%addr, mtls_enabled, "starting anti-forgery gRPC server");
 
     server::serve(addr, state, tls).await
+}
+
+/// Run an explicitly configured real ZK eligibility verification before the
+/// production gRPC service starts. This does not create a development bypass:
+/// it consumes an externally supplied, already-issued PASETO v4.public token
+/// and fails closed if issuer verification, proof creation, or proof
+/// verification fails.
+///
+/// This hook supports operator validation and the process integration test. It
+/// is intentionally disabled unless `AETHER_ANTIFORGERY_ZKP_VERIFY_TOKEN` is
+/// set; a service does not invent credentials at boot.
+fn run_zkp_validation_from_environment(signer: &token::TokenSigner) -> Result<(), std::io::Error> {
+    let paseto = match std::env::var("AETHER_ANTIFORGERY_ZKP_VERIFY_TOKEN") {
+        Ok(token) if !token.trim().is_empty() => token,
+        _ => return Ok(()),
+    };
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("system clock before Unix epoch: {error}"),
+            )
+        })?
+        .as_secs();
+    let mut registry = aether_antiforgery::zkp::EligibilityRegistry::new();
+    let credential = registry
+        .register_verified_paseto(&signer.verifying_key(), &paseto, now_unix)
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("ZK credential registration rejected: {error}"),
+            )
+        })?;
+    let proof = credential.prove_unexpired(now_unix).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("ZK proof creation rejected: {error}"),
+        )
+    })?;
+    registry
+        .verify_unexpired(&proof, now_unix)
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ZK proof verification rejected: {error}"),
+            )
+        })?;
+    tracing::info!(
+        commitment = %hex(&proof.commitment().to_bytes()),
+        "configured registered-PASETO Bulletproof eligibility validation succeeded"
+    );
+    Ok(())
 }
 
 fn antiforgery_addr_from_environment() -> Result<SocketAddr, std::io::Error> {

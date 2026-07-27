@@ -87,6 +87,10 @@ using it as an authorization gate.
    credential each reject.
 4. A production-binary path invokes registration/verification only through
    explicit operator configuration; there is no synthetic success default.
+   `aether-antiforgery` reads `AETHER_ANTIFORGERY_ZKP_VERIFY_TOKEN` only when
+   an operator supplies a non-empty token. It verifies that supplied PASETO,
+   registers it, proves eligibility, and verifies the proof before opening the
+   loopback gRPC listener. An invalid proof or token terminates startup.
 5. The integration test must use real loopback process I/O for the production
    entrypoint, not call an in-memory test-only verifier.
 
