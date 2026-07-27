@@ -176,7 +176,7 @@ mod tests {
         let seed =
             decode_secret_seed("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")?;
         assert_eq!(
-            hex(&seed),
+            hex(seed.as_ref()),
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
         );
         Ok(())
