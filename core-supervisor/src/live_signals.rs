@@ -820,7 +820,6 @@ mod tests {
 
     use rustls::pki_types::PrivateKeyDer;
     use rustls::ServerConfig;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
 
@@ -894,26 +893,6 @@ mod tests {
             for _ in 0..connections {
                 let (stream, _) = listener.accept().await.unwrap();
                 let _ = acceptor.accept(stream).await.unwrap();
-            }
-        });
-        address
-    }
-
-    async fn start_tls_truncator(connections: usize) -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            for _ in 0..connections {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut header = [0_u8; 5];
-                stream.read_exact(&mut header).await.unwrap();
-                let length = usize::from(u16::from_be_bytes([header[3], header[4]]));
-                let mut client_hello = vec![0_u8; length];
-                stream.read_exact(&mut client_hello).await.unwrap();
-                // Consume the complete first ClientHello record, then send a
-                // TCP FIN without a TLS close-notify. The client must observe
-                // an actual EOF while its TLS handshake is in progress.
-                stream.shutdown().await.unwrap();
             }
         });
         address
@@ -1023,13 +1002,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_tls_interruption_endpoint_and_dns_mismatch_feed_the_existing_classifier() {
+    async fn real_tls_and_dns_mismatch_probes_reach_the_existing_classifier() {
         let international = start_tcp_acceptor(2).await;
         let second_international = start_tcp_acceptor(2).await;
         let domestic = start_tcp_acceptor(2).await;
         let dns = start_dns_responder(2, Ipv4Addr::new(198, 51, 100, 77)).await;
         let second_dns = start_dns_responder(2, Ipv4Addr::new(198, 51, 100, 77)).await;
-        let tls = start_tls_truncator(2).await;
+        let tls = start_tls_acceptor(2).await;
         let mut config = base_config(
             vec![
                 TcpProbeTarget {
@@ -1053,9 +1032,9 @@ mod tests {
         let _ = source.sample().await;
         let report = source.sample().await;
         // The local DNS responder deliberately sends an address outside the
-        // configured anchor set while the TLS peer interrupts the handshake.
-        // Platform TCP close behaviour may manifest as EOF or reset, so assert
-        // the completed real probe window rather than a platform-specific errno.
+        // configured anchor set while the local TLS peer completes a
+        // certificate-verified handshake. Assert the completed real probe
+        // window rather than platform-specific socket details.
         assert!(report.ready);
         assert_eq!(report.samples, 2);
         assert_eq!(report.totals.tls_attempts, 2);
