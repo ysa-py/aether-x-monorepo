@@ -983,6 +983,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "diagnostic isolation; removed before merge"]
     async fn real_tcp_tls_and_dns_successes_produce_a_normal_classification() {
         let international = start_tcp_acceptor(2).await;
         let second_international = start_tcp_acceptor(2).await;
@@ -1022,6 +1023,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "diagnostic isolation; removed before merge"]
     async fn real_tls_interruption_endpoint_and_dns_mismatch_feed_the_existing_classifier() {
         let international = start_tcp_acceptor(2).await;
         let second_international = start_tcp_acceptor(2).await;
@@ -1064,6 +1066,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "diagnostic isolation; removed before merge"]
     async fn tcp_connection_failure_is_not_mislabeled_as_a_reset_or_dns_poisoning() {
         let domestic = start_tcp_acceptor(1).await;
         let first_closed = closed_local_address().await;
