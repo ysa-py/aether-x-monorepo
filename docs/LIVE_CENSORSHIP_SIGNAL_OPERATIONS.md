@@ -93,11 +93,10 @@ hostnames, resolver addresses, or subscriber information.
 
 ## CI evidence versus deployment evidence
 
-The repository test suite validates the strict configuration bounds and parses
-the pinned test CA into the TLS verifier without permitting an insecure
-verifier. The runtime TCP, TLS, and UDP-DNS probe paths require authorized
-staging/deployment verification; this authoring sandbox cannot run the Cargo
-dependency graph against a real controlled network.
+The repository test suite validates strict configuration bounds. The runtime
+TCP, TLS, and UDP-DNS probe paths require authorized staging/deployment
+verification; this authoring sandbox cannot run the Cargo dependency graph
+against a real controlled network.
 
 Full TLS handshakes, TLS interruptions, matching/mismatched DNS answers, and
 route withdrawal remain authorized staging/deployment checks until a

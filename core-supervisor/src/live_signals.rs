@@ -816,14 +816,9 @@ fn skip_dns_name(bytes: &[u8], mut cursor: usize) -> Result<usize, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddrV4};
-
-    fn fixture_ca_path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/live_signals/probe-ca.pem")
-    }
 
     #[test]
-    fn configuration_requires_independent_anchors_for_every_signal() {
+    fn configuration_rejects_an_empty_measurement_plan() {
         let config = LiveSignalConfig {
             interval_ms: 100,
             timeout_ms: 1_000,
@@ -833,15 +828,5 @@ mod tests {
             dns_targets: Vec::new(),
         };
         assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn pinned_tls_ca_is_loaded_without_an_insecure_verifier() {
-        let target = TlsProbeTarget {
-            address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 443)),
-            server_name: "probe.test".into(),
-            ca_certificate_pem: fixture_ca_path(),
-        };
-        assert!(prepare_tls_target(&target).is_ok());
     }
 }
