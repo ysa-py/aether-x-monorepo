@@ -35,6 +35,8 @@ __pycache__/
 # Local secrets — NEVER commit
 *.pem
 *.key
+# Public, self-signed loopback TLS fixture for live-signal unit tests only.
+!core-supervisor/tests/fixtures/live_signals/*.pem
 *.crt
 .env
 .env.*

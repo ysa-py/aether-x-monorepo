@@ -15,7 +15,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use aether_supervisor::{
-    core_adapters, grpc, routing,
+    core_adapters, grpc,
+    live_signals::{run_live_signal_monitor, LiveSignalSource},
+    routing,
     runtime_preflight::RuntimePreflight,
     store_and_forward::{OverflowPolicy, QueueLimits, StoreAndForward},
     telemetry::Collector,
@@ -73,6 +75,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Live censorship measurement is disabled until an operator deliberately
+    // supplies controlled TCP/TLS/DNS anchors. The source performs real socket
+    // and UDP probes, then feeds its bounded aggregate into blackout::classify;
+    // it only emits evidence and has no transport-actuation side effect.
+    let live_signal_source = match std::env::var("AETHER_LIVE_SIGNAL_CONFIG") {
+        Ok(path) if !path.trim().is_empty() => {
+            let source = LiveSignalSource::from_path(&path)?;
+            tracing::info!(
+                config = %path,
+                interval_ms = source.interval().as_millis(),
+                "live censorship-signal monitor configured"
+            );
+            Some(Arc::new(source))
+        }
+        _ => {
+            tracing::info!(
+                "live censorship-signal monitor disabled; set AETHER_LIVE_SIGNAL_CONFIG to enable controlled probes"
+            );
+            None
+        }
+    };
+
     // Data-plane routing: resolve Direct/Proxy/Block before a core connects.
     // Load from AETHER_ROUTING_RULES (JSON file) if set, else the embedded preset.
     let resolver = Arc::new(match std::env::var("AETHER_ROUTING_RULES") {
@@ -91,6 +115,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let supervisor = Arc::new(CoreSupervisor::with_default_adapters());
+
+    if let Some(source) = live_signal_source {
+        tokio::spawn(run_live_signal_monitor(source));
+    }
 
     // Store-and-forward: telemetry recorded while the control plane is
     // detached is buffered (bounded) and, when AETHER_SUPERVISOR_SPOOL points

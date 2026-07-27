@@ -22,11 +22,14 @@ and its hermetic tests, not reachability through a real network.
 ## Executive result
 
 1. The six requested Rust modules are compiled because `core-supervisor/src/lib.rs:41,46,56-57,72,79` exports them. That is **not** runtime wiring.
-2. The supervisor executable constructs `CoreSupervisor` and its telemetry
-   store-and-forward queue at `core-supervisor/src/main.rs:93-100`; it does not
-   construct `TrafficMorpher`, `BlackoutController`, `DpiForecaster`,
-   `DomesticIntel`, `LocalMesh`, or `EgressRegistry` there. The requested
-   continuity features therefore have **no production startup path today**.
+2. **Follow-up update — live signals:** when an operator supplies
+   `AETHER_LIVE_SIGNAL_CONFIG`, the supervisor now constructs and spawns
+   `LiveSignalSource`, which uses actual configured TCP/TLS/UDP DNS probes and
+   calls `blackout::classify`. See
+   `docs/LIVE_CENSORSHIP_SIGNAL_OPERATIONS.md`. It still does not construct
+   `TrafficMorpher`, `BlackoutController`, `DpiForecaster`, `DomesticIntel`,
+   `LocalMesh`, or `EgressRegistry`, and the new classifier output has no
+   transport-actuation side effect.
 3. `store_and_forward` is genuinely wired for **supervisor telemetry**: the queue
    is created from the environment and passed to `Collector` at
    `core-supervisor/src/main.rs:95-100`. It is not a store-and-forward path for
@@ -50,7 +53,7 @@ and its hermetic tests, not reachability through a real network.
 | Area | Implemented model | Runtime wiring | Mock/simulation / missing operational component | Verdict |
 | --- | --- | --- | --- | --- |
 | `ai_dpi.rs` | Profile selection, target-length calculation, deterministic jitter, and a candidate extension/cipher ordering (`core-supervisor/src/ai_dpi.rs:78-202,255-272`). | Used by `BlackoutController` and `AdvancedIntegration` as in-process state (`blackout.rs:167-225`, `advanced_integration.rs:129-160`); neither is created in `main.rs`. | No packet writer, scheduler, TLS ClientHello builder, Xray/sing-box config mutation, or packet capture. Unit tests only test numbers/order (`ai_dpi.rs:274-362`). | **Implemented model; not a traffic morpher.** |
-| `blackout.rs` | Pure classification from caller-supplied rates/booleans (`blackout.rs:75-113`) and an in-memory escalation decision (`blackout.rs:196-252`). The full-isolation output correctly lists no international paths (`blackout.rs:119-131`). | Not constructed by the supervisor entry point. `EnterpriseEngine` also owns one (`enterprise.rs:81,119,141-156`), but `EnterpriseEngine` is likewise not constructed by `main.rs`. | No probe collector produces `BlackoutSignal`; no actual route/DNS experiment verifies the booleans. The “fast” race/bond operates on the mock `Transport` abstraction. | **Implemented classifier and state transition; orphaned from production runtime.** |
+| `blackout.rs` | Pure classification from rates/booleans (`blackout.rs:75-121`) and an in-memory escalation decision (`blackout.rs:204-260`). The full-isolation output correctly lists no international paths (`blackout.rs:127-139`). | `LiveSignalSource` is conditionally started by `main.rs` from `AETHER_LIVE_SIGNAL_CONFIG` and calls `blackout::classify` after a bounded window. `BlackoutController`/`EnterpriseEngine` still are not constructed by `main.rs`. | The source measures actual configured TCP/TLS/UDP DNS outcomes, but a socket error cannot attribute a censor; deployment anchors, packet capture, and an authorized carrier drill remain required. The “fast” race/bond still operates on the mock `Transport` abstraction. | **Classifier now has an optional real probe input; no real transport protection/actuation.** |
 | `domestic_intel.rs` | TTL-based local ranking, per-peer caps, and permutation-only ordering (`domestic_intel.rs:62-79,200-310,362-408`). The tests cover stale/rejected observations and preserve candidates (`domestic_intel.rs:523-542,598-735`). | Only held by `AdvancedIntegration` (`advanced_integration.rs:49-53,79-82`), which is not constructed in `main.rs`. | No peer discovery, serialization, signature/authentication, replay protection, network send/receive, or binding to `MeshTransport`. `Observation` contains `Instant`, not a wire protocol. | **Implemented in-memory ranker; not gossip or a domestic network.** |
 | `dpi_forecast.rs` | Bounded EWMA/trend/hazard calculation (`dpi_forecast.rs:202-380`) with synthetic-sequence tests (`dpi_forecast.rs:415-635`). | `SeamlessController` consumes the `Transport` model (`seamless.rs:169-220`), but neither controller is constructed by the executable. | No telemetry-to-`HealthSample` bridge, no trained/ONNX model, no standby socket creation outside the simulated `Transport::connect`, and no real pre-warm test. | **Implemented deterministic forecast model; not a deployed predictive system.** |
 | `local_mesh.rs` | Thread-safe peer list, gateway filter, and a `MeshTransport` *trait* (`local_mesh.rs:23-99`). | No non-test `LocalMesh::new` use in the crate. | No BLE, Wi-Fi Direct, mDNS, WebRTC, WireGuard, routing, peer authentication, relay data plane, or implementation of `MeshTransport`. | **Registry/trait only; orphaned.** |
@@ -245,9 +248,11 @@ new networking, bypass, or client-support claim.
 
 ## فارسی — پاسخ عملیاتی کوتاه
 
-- در وضعیت فعلی، قابلیت‌های نام‌برده بیشتر **مدل و شبیه‌سازی تستی** هستند؛
-  در باینری supervisor به‌صورت runtime ساخته و اجرا نمی‌شوند. پس نباید آن‌ها
-  را ضد-DPI عملیاتی یا تضمین‌کنندهٔ اتصال معرفی کرد.
+- به‌روزرسانی بعدی: با `AETHER_LIVE_SIGNAL_CONFIG`، منبع `LiveSignalSource`
+  واقعاً TCP/TLS/UDP DNS را به anchorهای کنترل‌شده probe می‌کند و خروجی را به
+  `blackout::classify` می‌دهد؛ اما فقط اندازه‌گیری/log است و هنوز مسیر انتقال
+  یا تضمین اتصال نیست. سایر قابلیت‌های نام‌برده عمدتاً **مدل و شبیه‌سازی
+  تستی** هستند و نباید ضد-DPI عملیاتی یا تضمین‌کنندهٔ اتصال معرفی شوند.
 - خروجی subscription سه قالب دارد: لینک‌های Base64، YAML برای خانوادهٔ
   Clash/Mihomo و JSON برای sing-box. اما در مخزن هیچ تست CI که خودِ sing-box،
   Xray/Mihomo یا اپ‌های v2rayNG/Hiddify/NekoBox/Shadowrocket را اجرا و اتصال

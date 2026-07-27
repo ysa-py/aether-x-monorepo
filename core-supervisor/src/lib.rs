@@ -69,6 +69,7 @@ pub mod icmp_tunnel;
 pub mod in_tls;
 pub mod ipv6_routing;
 pub mod isolation;
+pub mod live_signals;
 pub mod local_mesh;
 pub mod loopback_buffer;
 pub mod model_registry;

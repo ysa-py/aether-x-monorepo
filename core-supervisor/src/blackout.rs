@@ -74,17 +74,23 @@ impl IsolationLevel {
 /// probe results.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BlackoutSignal {
-    /// Windowed TCP RST injection rate.
+    /// Windowed rate of locally observed TCP `ConnectionReset` errors. This is
+    /// a reset candidate, not proof that an on-path censor injected an RST.
     pub tcp_rst_rate: f64,
-    /// Windowed TLS truncation rate.
+    /// Windowed rate of TLS handshakes truncated after ClientHello transmission.
+    /// The source observes an EOF; it does not attribute who closed the flow.
     pub tls_trunc_rate: f64,
-    /// Windowed DNS anomaly rate (the signature of DNS-level censorship).
+    /// Windowed rate of pinned DNS-anchor responses that disagree with their
+    /// expected answer/response code.
     pub dns_anomaly_rate: f64,
-    /// Is international IP routing severed (can't route to international IPs)?
+    /// Conservative windowed indication that every configured international TCP
+    /// anchor failed; it is not a claim of nationwide route visibility.
     pub international_ip_severed: bool,
-    /// Does DNS still resolve international names (a path a DNS tunnel can ride)?
+    /// Whether at least one pinned direct DNS anchor returned an expected answer
+    /// in the current window.
     pub dns_resolves_international: bool,
-    /// Is the national intranet itself up (domestic bridge reachable)?
+    /// Whether an operator-designated domestic TCP anchor accepted a connection
+    /// in the current window.
     pub domestic_intranet_up: bool,
 }
 
