@@ -21,12 +21,25 @@ A local loopback-only WebRTC test would not satisfy the requirement: it does
 not exercise NAT traversal or TURN fallback. It is intentionally not presented
 as a substitute.
 
+## Isolated TURN provisioning
+
+`infra/turn/` now contains a loopback-only coturn Docker/Compose provisioner.
+`provision.sh` generates fresh credentials at startup and writes them with mode
+`0600`; no TURN username or password is committed. It binds relay signaling and
+UDP relay ports only to `127.0.0.1`.
+
+It was not executed here because Docker/Compose is absent from this environment.
+The provisioner is ready for a container-capable isolated runner, but that is
+not evidence of a relay allocation.
+
 ## Exact blocker
 
-**No TURN infrastructure provisioned.** A symmetric-NAT or relay-fallback
-scenario cannot be established without an operator-controlled TURN service and
-its credentials. The current environment also lacks `tc`, so packet-loss/jitter
-impairment cannot be applied to a real WebRTC path here.
+**No Docker/container runtime or TURN infrastructure is provisioned in the
+current execution environment.** A symmetric-NAT or relay-fallback scenario
+cannot be established without running the isolated coturn service and supplying
+its generated credentials to a real `webrtc-rs` peer pair. The current
+environment also lacks `tc`, so packet-loss/jitter impairment cannot be applied
+to a real WebRTC path here.
 
 ## Required evidence for a future ✅
 

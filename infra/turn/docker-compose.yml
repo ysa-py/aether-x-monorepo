@@ -1,0 +1,17 @@
+services:
+  turn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Loopback-only: no production relay and no public user traffic.
+    ports:
+      - "127.0.0.1:3478:3478/tcp"
+      - "127.0.0.1:3478:3478/udp"
+      - "127.0.0.1:49160-49200:49160-49200/udp"
+    tmpfs:
+      - /run/aether-turn:mode=0700,size=1m
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

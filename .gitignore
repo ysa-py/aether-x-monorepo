@@ -36,5 +36,6 @@ __pycache__/
 *.pem
 *.key
 *.crt
+infra/turn/runtime-credentials.env
 .env
 .env.*
