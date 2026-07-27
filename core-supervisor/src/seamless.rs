@@ -1,28 +1,25 @@
-//! Seamless continuity controller — **the user must never feel the cut**.
+//! Seamless continuity controller model.
 //!
-//! This is the module that answers the operational requirement directly: when
-//! a transport is blocked, the person using it should not notice. Not "should
-//! reconnect quickly" — *should not notice*.
+//! It models how a caller could select a previously established standby when a
+//! transport is blocked. The repository does not wire it to a subscriber data
+//! plane, so it cannot establish that a user will not notice a cut.
 //!
-//! Every piece needed for that already exists in this crate, but each solves
-//! only one part of the problem and none of them were connected:
+//! The crate contains component models that describe parts of a continuity
+//! design, but this controller does not connect them to a real data plane:
 //!
-//! | Existing part | What it solves | What it still leaves exposed |
+//! | Existing part | Modelled role | Missing proof |
 //! |---|---|---|
-//! | [`crate::dpi_forecast::DpiForecaster`] | Sees the block coming | Nothing acts on the warning |
-//! | [`crate::multipath::MultipathRacer`] | Finds the fastest path fast | Only runs *after* the primary is already gone |
-//! | [`crate::failover::FailoverBridge`] | Swaps active transport in < 1 ms | The replacement is cold: a full handshake still stalls the user |
-//! | [`crate::buffer_replay::RingBufferReplay`] | Re-injects in-flight frames | Needs somewhere warm to re-inject them *into* |
+//! | [`crate::dpi_forecast::DpiForecaster`] | Scores supplied observations | Production telemetry and calibration |
+//! | [`crate::multipath::MultipathRacer`] | Orders `Transport` model results | Concurrent real socket attempts |
+//! | [`crate::failover::FailoverBridge`] | Swaps an in-memory handle | User-flow migration and timing measurement |
+//! | [`crate::buffer_replay::RingBufferReplay`] | Holds in-process frames | A verified frame/stream integration |
 //!
-//! The gap is the **cold-start handshake**. A sub-millisecond bridge swap onto
-//! a transport that has not handshaked yet still costs the user a full RTT
-//! chain — and on a last-resort path under blackout conditions that is exactly
-//! the multi-second stall they perceive as "the internet broke".
-//!
-//! [`SeamlessController`] closes it by spending the forecaster's lead time:
-//! it keeps a small set of standby transports **already handshaked** while the
-//! primary is still healthy, so the eventual switch is a pointer swap onto a
-//! hot path plus a buffer replay — no handshake, no stall, nothing to feel.
+//! The controller records candidate standbys from `Transport::connect` and
+//! selects a recorded handle during a later switch. Whether that represents a
+//! real handshake depends entirely on the concrete `Transport` implementation;
+//! the built-in resilience transports are models. It must not be used to claim
+//! zero handshake cost, no stall, or session continuity without an end-to-end
+//! data-plane test.
 //!
 //! ## Non-duplication
 //!

@@ -1,10 +1,10 @@
-//! Advanced Integration Layer — fully automatic anti-censorship orchestration.
+//! Advanced Integration Layer — in-process continuity orchestration model.
 //!
-//! Combines blackout isolation detection (`blackout`), AI anti-DPI morphing
-//! (`ai_dpi`), resilience tier escalation (`resilience`), measurement
-//! consent (`measurement` — via telemetry bridge), transparency logging
-//! (`transparency`), and device-level panic-wipe (`panic_wipe`) into a
-//! single zero-disconnect, zero-false-hope, fully automatic orchestrator.
+//! Combines blackout isolation classification (`blackout`), traffic-shaping
+//! model selection (`ai_dpi`), resilience-tier selection (`resilience`), and
+//! related state into one API. It is not constructed by the supervisor binary
+//! and does not itself own a packet, core, mesh, or external-egress data path.
+//! Its outputs must not be presented as zero-disconnect connectivity claims.
 //!
 //! Hard invariants (non-negotiable):
 //! 1. **Never reports "connected" without a real transport handshake** (≤ 5 s).

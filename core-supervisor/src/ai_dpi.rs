@@ -1,9 +1,11 @@
-//! AI-DPI traffic morphing engine.
+//! AI-DPI traffic-shaping model.
 //!
-//! Dynamically pads packet lengths and injects inter-arrival time (IAT) jitter
-//! to match whitelisted Iranian domestic traffic profiles (Aparat VOD streaming,
-//! SHAPARAK banking TLS). Also rotates TLS JA4 fingerprints (extension order,
-//! cipher suites, GREASE values) per handshake to defeat static DPI signatures.
+//! This module computes packet-length targets, inter-arrival-time (IAT) jitter,
+//! and candidate TLS-extension/cipher ordering for three hard-coded profiles.
+//! It does **not** write padded bytes, sleep/delay a live flow, construct a TLS
+//! ClientHello, or attach to Xray/sing-box. Consumers must prove those effects
+//! in an authorized integration test before presenting this model as anti-DPI
+//! traffic morphing.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

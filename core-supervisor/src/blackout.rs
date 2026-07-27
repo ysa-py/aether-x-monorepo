@@ -4,26 +4,27 @@
 //! internet access is cut, what still works — and where is the limit no
 //! software can cross?"*
 //!
-//! A censor that severs international IP routing while DNS still resolves
-//! internationally leaves a rideable path: the Tor pluggable transports and
-//! DNS tunnels in [`crate::resilience`] can still reach the open internet. But
-//! the moment international DNS resolution itself is severed, those paths die
-//! too — there is nothing left to ride. That is the **hard bound**: no
-//! software defeats a fully severed international reachability layer. Past it,
-//! the only thing that stays "online" is a domestically-reachable bridge on
-//! the national intranet (domestic content only, not the open internet).
+//! If a censor severs international IP routing while DNS still resolves
+//! internationally, an independently deployed and verified tunnel might have a
+//! remaining path. This module only models that conditional decision; it does
+//! not establish such a tunnel. If international DNS resolution is also severed,
+//! there is nothing for software-only transport to ride. That is the **hard
+//! bound**: no software defeats a fully severed international reachability
+//! layer. Past it, only a separately deployed domestically reachable bridge can
+//! serve domestic content; it is not open-Internet connectivity.
 //!
 //! What this module actually delivers (and does not over-promise):
-//!   - **Detect** the isolation level in milliseconds from probe + DPI signals.
-//!   - **Morph** traffic to the most-whitelisted Iranian-domestic profile as
-//!     isolation deepens (Aparat VOD → SHAPARAK banking TLS), via the AI
-//!     [`crate::ai_dpi::TrafficMorpher`].
-//!   - **Escalate** automatically to the surviving tier (PTs → DNS tunnels)
-//!     the instant routing is severed, with zero-perceived-downtime failover
-//!     (the [`crate::failover::FailoverBridge`] swaps active transport in
-//!     < 1 ms, so the user does not feel the cut).
+//!   - **Classify** a caller-supplied signal snapshot deterministically.
+//!   - **Select** a profile name and a model transport ordering as isolation
+//!     deepens; it does not collect probes or mutate live packets itself.
+//!   - **Model** escalation through the in-process resilience registry. The
+//!     registry must be backed by real, independently probed transports before
+//!     this can be treated as an operational failover path.
 //!   - **Report the bound honestly** when even DNS resolution is gone, instead
 //!     of pretending a connection exists that cannot exist.
+//!
+//! The supervisor executable does not construct this controller today. See the
+//! repository continuity audit for the runtime-wiring and integration-test gap.
 
 use crate::ai_dpi::TrafficMorpher;
 use crate::multipath::{MultipathBond, MultipathRacer};
@@ -131,15 +132,16 @@ pub fn international_surviving_paths(level: IsolationLevel) -> &'static [&'stati
     }
 }
 
-/// The Iranian-domestic traffic profile the morpher should adopt at this level.
-/// Deeper isolation ⇒ a more aggressively-whitelisted domestic profile.
+/// The built-in traffic-shaping profile selected by this model at each level.
+/// The profile names/values are static source data, not measured whitelist
+/// evidence for a particular network.
 #[must_use]
 pub fn recommended_morph_profile(level: IsolationLevel) -> &'static str {
     match level {
         IsolationLevel::Normal => "https-browsing",
         IsolationLevel::DpiBlocking => "aparat-vod",
-        // SHAPARAK banking TLS is among the most fiercely whitelisted domestic
-        // flows; under severed routing it is the best disguise that survives.
+        // This is a deterministic profile-selection policy only. It is not
+        // evidence that the named traffic survives a given network condition.
         IsolationLevel::RoutingSevered | IsolationLevel::FullIsolation => "shaparak-banking",
     }
 }

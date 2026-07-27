@@ -1,21 +1,19 @@
-//! Predictive DPI block forecasting — *act before the block lands*.
+//! Predictive DPI block-forecast model.
 //!
-//! Every existing decision path in this crate is **reactive**: the
-//! [`crate::decider::LocalDecider`] switches protocol *after* the success rate
-//! has already collapsed, and [`crate::resilience::ResilienceController`]
-//! escalates *after* the primary path is gone. Between the censor's first
-//! probe and the user's first stalled request there is a window — typically
-//! seconds to tens of seconds on Iranian infrastructure, where a block ramps
-//! (a rising RST rate, then TLS truncation, then full drop) rather than
-//! landing instantly. **That window is where the user-perceived outage is
-//! created, and it is exactly what this module removes.**
+//! Existing decision paths in this crate are reactive: the
+//! [`crate::decider::LocalDecider`] switches protocol after its input window
+//! changes, and [`crate::resilience::ResilienceController`] models escalation
+//! after the primary path is gone. This module computes a bounded forecast from
+//! a supplied sequence of samples. It does not establish that a block ramps on
+//! a particular network, nor does the calculation itself remove an outage.
 //!
 //! [`DpiForecaster`] consumes the same observation stream the decider already
 //! sees (no new collection path, no duplication) and estimates a **hazard**:
 //! the probability that the currently-active transport is blocked within the
-//! next `horizon`. When the hazard crosses the pre-warm threshold, the caller
-//! (the seamless-continuity controller) is told to warm standby transports
-//! *before* the primary dies, so the eventual switch is 0-RTT.
+//! next `horizon`. When the hazard crosses the pre-warm threshold, a caller
+//! can choose to warm standby transports before the primary dies. This module
+//! is only an in-process deterministic forecast model: it neither collects
+//! production samples nor opens standby connections on its own.
 //!
 //! ## Why this is not a duplicate of `policy::FallbackEngine`
 //!

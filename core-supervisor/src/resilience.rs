@@ -7,11 +7,11 @@
 //! and [`crate::failover::FailoverBridge`] all exist and are each tested in
 //! isolation, but **nothing connected them end to end.**
 //!
-//! This module is that connection: given a [`crate::policy::Decision`] it acts
-//! — on `Escalate` it asks the registry for the best available last-resort
-//! transport (Tor pluggable transports, then DNS tunnels) and atomically
-//! promotes it onto the failover bridge, achieving zero-downtime escalation
-//! when the primary cores can no longer reach the open internet.
+//! This module connects those in-process models: given a
+//! [`crate::policy::Decision`] it selects an available registry entry and
+//! promotes its name on the failover bridge. It does not open or forward a
+//! last-resort transport; real failover semantics require a data-plane
+//! integration and measurement.
 
 use crate::dns_tunnel::{DnsTunnelTransport, DnsTunnelVariant};
 use crate::failover::{FailoverBridge, TransportHandle};

@@ -1,7 +1,8 @@
 //! Out-of-band egress — extension point for operator-provisioned alternate uplinks (§2).
 //!
-//! Does NOT invent hardware. If the operator has a satellite terminal, secondary SIM, or
-//! trusted relay proxy, the supervisor binds to it automatically. No vendor-specific APIs.
+//! Does NOT invent hardware or bind an uplink automatically. This module is an
+//! interface/registry model; an operator must provide a concrete interface and
+//! a falsifiable network probe before it can contribute to continuity.
 
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};

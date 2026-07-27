@@ -19,8 +19,10 @@ func (s *Server) mountSubscriberOnboarding(r chiRouter) {
 }
 
 // serveSubscription is the content-negotiated subscription endpoint (§5).
-// Enhanced: dynamically evaluates ClickHouse telemetry if DynamicSubs is configured,
-// returning geo-routed optimized profiles compatible with sing-box, xray-core, clash-meta, shadowrocket, nekobox.
+// When DynamicSubs is configured it renders verified-catalog output and may
+// reorder catalog entries from aggregate ClickHouse scores. User-Agent labels
+// select a serializer; they are not proof that a named external client version
+// accepts the output.
 func (s *Server) serveSubscription(w http.ResponseWriter, r *http.Request) {
 	subToken := chiURLParam(r, "subToken")
 	if subToken == "" {

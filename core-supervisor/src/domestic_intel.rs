@@ -9,12 +9,12 @@
 //! patience and the surviving trickle of bandwidth are scarcest. Meanwhile a
 //! phone one room away may already *know* the answer.
 //!
-//! [`DomesticIntel`] fixes that. It is a gossip layer over the **domestic**
-//! network only (the local mesh in [`crate::local_mesh`], the national intranet
-//! — anything that still carries packets when international routing is gone).
-//! Peers exchange compact, signed-at-a-higher-layer *observations* about which
-//! transports are working, and each device fuses them into a local ranking that
-//! reorders its own connection attempts.
+//! [`DomesticIntel`] is an in-memory observation fuser intended for a domestic
+//! network (the local mesh in [`crate::local_mesh`], the national intranet —
+//! anything that still carries packets when international routing is gone). It
+//! has no mesh transport, serialization, authentication, signature check, or
+//! peer-discovery implementation. A caller may feed it observations and use the
+//! resulting local ranking to reorder its own connection attempts.
 //!
 //! The effect is direct: the device tries the option most likely to work
 //! **first**, instead of walking a dead list. Fewer timeouts is less waiting,
