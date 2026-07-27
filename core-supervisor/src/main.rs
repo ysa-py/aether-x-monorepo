@@ -19,7 +19,9 @@ use aether_supervisor::{
     live_signals::{run_live_signal_monitor, LiveSignalSource},
     routing,
     runtime_preflight::RuntimePreflight,
-    store_and_forward::{OverflowPolicy, QueueLimits, StoreAndForward},
+    store_and_forward::{
+        Aes256GcmSpoolSealer, OverflowPolicy, QueueLimits, SpoolSealer, StoreAndForward,
+    },
     telemetry::Collector,
     CoreSupervisor,
 };
@@ -163,12 +165,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Build the store-and-forward queue from the environment.
 ///
-/// * `AETHER_SUPERVISOR_SPOOL` — path to the JSONL spool. Unset ⇒ in-memory
+/// * `AETHER_SUPERVISOR_SPOOL` — path to the sealed spool. Unset ⇒ in-memory
 ///   only (no disk writes, still bounded).
+/// * `AETHER_SUPERVISOR_SPOOL_KEY` — exactly 64 hexadecimal characters for an
+///   AES-256-GCM key. Missing/invalid ⇒ no disk spool is opened or written.
 /// * `AETHER_SUPERVISOR_SPOOL_MAX_ITEMS` / `..._MAX_BYTES` — capacity bound.
 ///
-/// A spool that cannot be opened is a warning, never a boot failure: losing
-/// buffered telemetry must not take the data plane down.
+/// A sealed spool that cannot be opened is a warning, never a boot failure:
+/// telemetry stays in the bounded in-memory queue rather than being persisted
+/// in plaintext.
 fn store_and_forward_from_environment() -> Arc<StoreAndForward> {
     let limits = QueueLimits {
         max_items: env_usize(
@@ -183,31 +188,53 @@ fn store_and_forward_from_environment() -> Arc<StoreAndForward> {
     };
 
     match std::env::var("AETHER_SUPERVISOR_SPOOL") {
-        Ok(path) if !path.trim().is_empty() => match StoreAndForward::open(&path, limits) {
-            Ok(queue) => {
-                tracing::info!(
-                    spool = %path,
-                    recovered = queue.recovered_items(),
-                    max_items = limits.max_items,
-                    max_bytes = limits.max_bytes,
-                    "store-and-forward spool opened; queue recovered from disk"
-                );
-                Arc::new(queue)
+        Ok(path) if !path.trim().is_empty() => {
+            // Disk persistence is never allowed to fall back to plaintext. A
+            // missing/invalid key leaves telemetry in the bounded in-memory
+            // queue, preserving data-plane availability without leaking a spool.
+            let sealer: Result<Arc<dyn SpoolSealer>, _> =
+                std::env::var("AETHER_SUPERVISOR_SPOOL_KEY")
+                    .map_err(|_| ())
+                    .and_then(|encoded| {
+                        Aes256GcmSpoolSealer::from_hex(&encoded)
+                            .map(|sealer| Arc::new(sealer) as Arc<dyn SpoolSealer>)
+                            .map_err(|_| ())
+                    });
+            match sealer {
+                Ok(sealer) => match StoreAndForward::open(&path, limits, sealer) {
+                    Ok(queue) => {
+                        tracing::info!(
+                            spool = %path,
+                            recovered = queue.recovered_items(),
+                            max_items = limits.max_items,
+                            max_bytes = limits.max_bytes,
+                            "sealed store-and-forward spool opened; queue recovered from disk"
+                        );
+                        Arc::new(queue)
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            spool = %path,
+                            error = %error,
+                            "sealed store-and-forward spool unavailable; falling back to in-memory queue"
+                        );
+                        Arc::new(StoreAndForward::with_limits(limits))
+                    }
+                },
+                Err(()) => {
+                    tracing::warn!(
+                        spool = %path,
+                        "disk spool disabled: AETHER_SUPERVISOR_SPOOL_KEY must contain a valid 32-byte hexadecimal key; using bounded in-memory queue"
+                    );
+                    Arc::new(StoreAndForward::with_limits(limits))
+                }
             }
-            Err(error) => {
-                tracing::warn!(
-                    spool = %path,
-                    error = %error,
-                    "store-and-forward spool unavailable; falling back to in-memory queue"
-                );
-                Arc::new(StoreAndForward::with_limits(limits))
-            }
-        },
+        }
         _ => {
             tracing::info!(
                 max_items = limits.max_items,
                 max_bytes = limits.max_bytes,
-                "store-and-forward queue in-memory (set AETHER_SUPERVISOR_SPOOL to persist)"
+                "store-and-forward queue in-memory (set AETHER_SUPERVISOR_SPOOL and AETHER_SUPERVISOR_SPOOL_KEY to persist sealed telemetry)"
             );
             Arc::new(StoreAndForward::with_limits(limits))
         }
@@ -272,6 +299,10 @@ fn init_tracing() {
 mod tests {
     use super::*;
 
+    fn test_spool_sealer() -> Arc<dyn SpoolSealer> {
+        Arc::new(Aes256GcmSpoolSealer::from_key_bytes([0xA5; 32]).unwrap())
+    }
+
     #[test]
     fn rejects_invalid_supervisor_address() {
         let value = "not-an-address";
@@ -314,7 +345,7 @@ mod tests {
             policy: OverflowPolicy::EvictOldest,
         };
         {
-            let q = StoreAndForward::open(&path, limits).unwrap();
+            let q = StoreAndForward::open(&path, limits, test_spool_sealer()).unwrap();
             q.try_enqueue(
                 aether_supervisor::store_and_forward::Priority::Control,
                 b"pending-telemetry".to_vec(),
@@ -322,7 +353,7 @@ mod tests {
             .unwrap();
             q.persist();
         }
-        let restarted = StoreAndForward::open(&path, limits).unwrap();
+        let restarted = StoreAndForward::open(&path, limits, test_spool_sealer()).unwrap();
         assert_eq!(restarted.pending(), 1);
         assert_eq!(restarted.recovered_items(), 1);
     }

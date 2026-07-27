@@ -52,6 +52,7 @@ dependencies = [
  "prost",
  "rand 0.8.7",
  "rustls",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

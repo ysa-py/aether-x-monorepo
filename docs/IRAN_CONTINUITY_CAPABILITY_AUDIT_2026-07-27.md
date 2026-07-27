@@ -32,8 +32,9 @@ and its hermetic tests, not reachability through a real network.
    transport-actuation side effect.
 3. `store_and_forward` is genuinely wired for **supervisor telemetry**: the queue
    is created from the environment and passed to `Collector` at
-   `core-supervisor/src/main.rs:95-100`. It is not a store-and-forward path for
-   arbitrary subscriber traffic.
+   `core-supervisor/src/main.rs:124-128`. Disk persistence now requires an
+   AES-256-GCM key and sealed records; it remains a telemetry queue, not a
+   store-and-forward path for arbitrary subscriber traffic.
 4. The subscription publisher is a real Go HTTP/catalog-rendering path when an
    operator enables it and supplies a valid catalog. It is disabled in the
    shipped Northflank manifest (`deploy/northflank/northflank.yaml:306-312`).

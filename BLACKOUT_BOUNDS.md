@@ -199,21 +199,22 @@ A single dropped probe **never** advances past Degraded. This is property-tested
     rejects the newcomer (`OverflowPolicy::RejectNew`) or evicts the oldest *bulk* item
     (`OverflowPolicy::EvictOldest`); control-lane items are never evicted for bulk data. There is
     no unbounded growth path, however long the blackout lasts.
-  - **Disk persistence** — `StoreAndForward::open(path, limits)` appends each accepted item as a
-    JSON line and compacts by temp-file + rename on flush/eviction. This follows the same pattern
-    as the `AETHER_TELEMETRY_SPOOL` disk spool in
-    `control-plane/internal/telemetry/clickhouse.go` (append JSONL on the write path, drain and
-    truncate on reconnect), so both planes behave identically during an outage.
-  - **Crash recovery** — the queue is reloaded from disk at startup, restoring lane order, item IDs
-    and the next-ID watermark. A torn trailing line from a power cut costs that one record, not the
-    queue.
+  - **Sealed disk persistence** — `StoreAndForward::open(path, limits, sealer)` encrypts and
+    authenticates every serialized item with AES-256-GCM before writing a JSON envelope, then
+    compacts by temp-file + rename on flush/eviction. The spool contains a format marker, nonce,
+    and ciphertext—never queued payload bytes or queue metadata in plaintext.
+  - **Crash recovery** — the queue authenticates and reloads disk records at startup, restoring
+    lane order, item IDs and the next-ID watermark. A torn trailing record costs that one record;
+    a complete record with a wrong key or failed authentication refuses to open and is not
+    overwritten.
   - **Live path** — `telemetry::Collector::with_store_and_forward` buffers telemetry recorded while
     the control plane is detached and replays the backlog on the next `StreamTelemetry` attach.
     Configured by `AETHER_SUPERVISOR_SPOOL` (+ `_MAX_ITEMS` / `_MAX_BYTES`) in
     `core-supervisor/src/main.rs`.
 
-  Still **not** claimed: the at-rest payload is not yet sealed with the `antiforgery` crypto
-  primitives — the sealing trait is defined but the queue writes plaintext JSON today.
+  The disk path now requires a real `SpoolSealer` and the production entrypoint requires
+  `AETHER_SUPERVISOR_SPOOL_KEY`; it never falls back to a plaintext spool. This protects
+  encrypted bytes at rest, not a process that is already running with the key in memory.
 - **`out_of_band.rs`** — optional operator-provisioned uplink. **Pending** (§2 of the directive).
 - **`local_mesh.rs`** — peer discovery + ad-hoc gateway. **Pending** (§3 of the directive).
 
