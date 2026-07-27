@@ -146,7 +146,15 @@ pub async fn connect_tcp(
     let addresses = match target {
         TcpConnectTarget::SocketAddr(address) => vec![address],
         TcpConnectTarget::Hostname { hostname, port } => {
-            let resolution = timeout(options.timeout, lookup_host((hostname.as_str(), port))).await;
+            // `lookup_host` retains a borrow until its result is dropped; keep a
+            // separate lookup string so the original hostname remains available
+            // for the typed DNS error below.
+            let lookup_hostname = hostname.clone();
+            let resolution = timeout(
+                options.timeout,
+                lookup_host((lookup_hostname.as_str(), port)),
+            )
+            .await;
             match resolution {
                 Ok(Ok(addresses)) => addresses.collect::<Vec<_>>(),
                 Ok(Err(source)) => {
