@@ -33,6 +33,14 @@ for _ in $(seq 1 50); do
   sleep 0.02
 done
 
+python3 - "$port" <<'PY'
+import socket
+import sys
+with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2):
+    pass
+print("controlled_tcp_connect=PASS")
+PY
+
 curl --silent --show-error --fail --cacert "$workdir/cert.pem" \
   --trace-ascii "$workdir/curl.trace" \
   --header 'accept: application/dns-json' \

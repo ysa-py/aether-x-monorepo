@@ -18,6 +18,7 @@ HTTPS trace, and removes the temporary key/certificate/logs.
 ## Actual output
 
 ```text
+controlled_tcp_connect=PASS
 controlled_doh_response=PASS
 {"accept":"application/dns-json","content_length":"","method":"GET","name":"example.test","path":"/dns-query","query_keys":["name","type"],"type":"A","user_agent":"curl/7.88.1"}
 controlled_doh_probe=PASS
