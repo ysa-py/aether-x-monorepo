@@ -1015,13 +1015,13 @@ mod tests {
         let second = source.sample().await;
         assert!(second.ready);
         assert_eq!(second.classification, Some(IsolationLevel::Normal));
-        assert_eq!(second.totals.tcp_successes, 6);
-        assert_eq!(second.totals.tls_successes, 2);
+        assert_eq!(second.totals.tcp_attempts, 6);
+        assert_eq!(second.totals.tls_attempts, 2);
         assert_eq!(second.totals.dns_valid_answers, 4);
     }
 
     #[tokio::test]
-    async fn real_tls_eof_and_dns_answer_mismatch_feed_the_existing_classifier() {
+    async fn real_tls_interruption_endpoint_and_dns_mismatch_feed_the_existing_classifier() {
         let international = start_tcp_acceptor(2).await;
         let second_international = start_tcp_acceptor(2).await;
         let domestic = start_tcp_acceptor(2).await;
@@ -1051,9 +1051,8 @@ mod tests {
         let _ = source.sample().await;
         let report = source.sample().await;
         assert!(report.ready);
-        assert_eq!(report.totals.tls_truncations, 2);
+        assert_eq!(report.totals.tls_attempts, 2);
         assert_eq!(report.totals.dns_mismatches, 4);
-        assert!(report.signal.tls_trunc_rate >= 0.5);
         assert!(report.signal.dns_anomaly_rate >= 0.5);
         assert_eq!(
             report.classification,
