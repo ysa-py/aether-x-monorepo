@@ -1053,7 +1053,6 @@ mod tests {
 
         let _ = source.sample().await;
         let report = source.sample().await;
-        println!("::warning title=live-signal-mismatch::{report:?}");
         assert!(report.ready);
         assert_eq!(report.totals.tls_attempts, 2);
         assert_eq!(report.totals.dns_mismatches, 4);
