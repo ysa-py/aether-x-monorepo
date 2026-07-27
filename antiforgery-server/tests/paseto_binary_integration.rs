@@ -65,14 +65,34 @@ async fn production_binary_issues_and_verifies_a_paseto_v4_public_token() {
         .env("AETHER_ANTIFORGERY_ZKP_VERIFY_TOKEN", zkp_token)
         .env("AETHER_MTLS_ENABLED", "false")
         .stdout(Stdio::null())
-        // Keep child diagnostics in the real CI log when startup rejects the
-        // configured cryptographic validation rather than hiding an error.
-        .stderr(Stdio::inherit())
+        // Keep startup diagnostics available for a real-process test failure.
+        .stderr(Stdio::piped())
         .spawn()
         .expect("start the production anti-forgery binary");
 
     let endpoint = format!("http://{address}");
-    let mut client = connect_with_retry(&endpoint).await;
+    let mut client = match connect_with_retry(&endpoint).await {
+        Ok(client) => client,
+        Err(()) => {
+            let exited = child.try_wait().expect("inspect production process status");
+            if exited.is_none() {
+                child
+                    .kill()
+                    .await
+                    .expect("stop unresponsive production process");
+            }
+            let status = child.wait().await.expect("reap failed production process");
+            let mut stderr = String::new();
+            if let Some(mut child_stderr) = child.stderr.take() {
+                tokio::io::AsyncReadExt::read_to_string(&mut child_stderr, &mut stderr)
+                    .await
+                    .expect("read production process diagnostics");
+            }
+            panic!(
+                "production anti-forgery binary did not accept a loopback gRPC connection; status: {status}; diagnostics: {stderr}"
+            );
+        }
+    };
     let issued = client
         .issue_token(IssueTokenRequest {
             subscription_id: "binary-e2e-subscription".into(),
@@ -118,13 +138,15 @@ async fn production_binary_issues_and_verifies_a_paseto_v4_public_token() {
     child.wait().await.expect("reap production binary");
 }
 
-async fn connect_with_retry(endpoint: &str) -> AntiForgeryServiceClient<tonic::transport::Channel> {
+async fn connect_with_retry(
+    endpoint: &str,
+) -> Result<AntiForgeryServiceClient<tonic::transport::Channel>, ()> {
     let endpoint = Endpoint::from_shared(endpoint.to_string()).expect("loopback endpoint is valid");
     for _ in 0..100 {
         match AntiForgeryServiceClient::connect(endpoint.clone()).await {
-            Ok(client) => return client,
+            Ok(client) => return Ok(client),
             Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
         }
     }
-    panic!("production anti-forgery binary did not accept a loopback gRPC connection");
+    Err(())
 }
