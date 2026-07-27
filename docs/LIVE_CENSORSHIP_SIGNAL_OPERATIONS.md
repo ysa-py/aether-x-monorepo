@@ -42,7 +42,7 @@ subscription credentials, or private keys to this repository.
     {
       "address": "203.0.113.10:443",
       "server_name": "tls-anchor.operator.invalid",
-      "ca_certificate_pem": "/run/aether/probe-ca.pem"
+      "ca_certificate_der": "/run/aether/probe-ca.der"
     }
   ],
   "dns_targets": [
@@ -67,7 +67,7 @@ the deployed JSON; DNS names are used only for SNI/DNS questions.
 The strict validator requires:
 
 - at least two TCP targets labelled `international` and one labelled `domestic`;
-- at least one TLS target with a CA PEM that validates the target's SNI name;
+- at least one TLS target with a DER CA certificate that validates the target's SNI name;
 - at least two DNS targets with explicit expected A/AAAA answer sets;
 - `interval_ms` in 1–300 seconds, timeout in 250 ms–30 seconds, and a 2–60
   cycle window.
