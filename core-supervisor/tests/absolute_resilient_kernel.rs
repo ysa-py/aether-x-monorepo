@@ -56,21 +56,108 @@ fn ai_morph_shapes_like_youtube_and_zoom() {
 
 // ── FEC 40% Loss Survival ──────────────────────────────────────────────────
 
+/// Deterministic PRNG: reproducible "random" loss patterns, no rand dep.
+struct LossRng(u64);
+
+impl LossRng {
+    fn next_u32(&mut self) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 33) as u32
+    }
+
+    fn shuffle<T>(&mut self, v: &mut [T]) {
+        for i in (1..v.len()).rev() {
+            let j = (self.next_u32() as usize) % (i + 1);
+            v.swap(i, j);
+        }
+    }
+}
+
 #[test]
 fn fec_survives_40_percent_loss() {
-    // 10 data + 7 parity = 17 total, 40% loss = 7 shards lost
-    let cfg = FecConfig::for_loss(10, 0.4, 512);
+    // 10 data + 7 parity = 17 total. A genuine 40% loss removes
+    // floor(17 * 0.4) = 6 shards, chosen at random across BOTH lanes.
+    let cfg = FecConfig::for_loss(10, 0.4, 4096);
     assert_eq!(cfg.total_shards(), 17);
     let enc = FecEncoder::new(cfg.clone());
     let data = b"critical payload must survive 40% loss without retransmission".repeat(50);
     let shards = enc.encode(&data).unwrap();
 
-    // Simulate 40% loss: drop 7 shards (first 7 data)
-    let received: Vec<_> = shards.into_iter().skip(1).collect(); // lose 1, still need 10
-                                                                 // For this test lose 1, should recover
+    let drop_count = (cfg.total_shards() as f64 * 0.4).floor() as usize;
+    assert_eq!(drop_count, 6, "40% of 17 shards must be 6 dropped shards");
+
+    let mut rng = LossRng(0x5EED_1234_ABCD_0001);
+    for trial in 0..100 {
+        let mut order: Vec<usize> = (0..cfg.total_shards()).collect();
+        rng.shuffle(&mut order);
+        let dropped: std::collections::HashSet<usize> =
+            order.iter().copied().take(drop_count).collect();
+
+        let received: Vec<_> = shards
+            .iter()
+            .filter(|s| !dropped.contains(&s.index))
+            .cloned()
+            .collect();
+        assert_eq!(
+            received.len(),
+            cfg.total_shards() - drop_count,
+            "exactly 40% of shards must be gone"
+        );
+        let data_shards_lost = dropped.iter().filter(|i| **i < cfg.k).count();
+
+        let dec = FecDecoder::new();
+        let decoded = dec
+            .decode(received, &cfg, data.len())
+            .unwrap_or_else(|e| panic!("trial {trial}: 40% loss must recover, got {e}"));
+        // The whole point: byte-for-byte equality with the source payload.
+        assert_eq!(
+            decoded, data,
+            "trial {trial}: recovered bytes must be identical to source (lost {dropped:?})"
+        );
+        assert_eq!(
+            dec.shards_recovered() as usize,
+            data_shards_lost,
+            "trial {trial}: every lost data shard must be reconstructed"
+        );
+    }
+}
+
+#[test]
+fn fec_worst_case_all_but_one_data_shard_lost() {
+    // Adversarial pattern (not random): the censor kills the data lane.
+    // 7 of 10 data shards gone (41% loss) and all parity survives.
+    let cfg = FecConfig::for_loss(10, 0.4, 4096);
+    let enc = FecEncoder::new(cfg.clone());
+    let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+    let shards = enc.encode(&data).unwrap();
+
+    let dropped: std::collections::HashSet<usize> = (3..10).collect(); // 7 data shards
+    let received: Vec<_> = shards
+        .into_iter()
+        .filter(|s| !dropped.contains(&s.index))
+        .collect();
+    assert_eq!(received.len(), 10);
+
     let dec = FecDecoder::new();
     let decoded = dec.decode(received, &cfg, data.len()).unwrap();
     assert_eq!(decoded, data);
+    assert_eq!(dec.shards_recovered(), 7);
+}
+
+#[test]
+fn fec_below_recovery_threshold_fails_closed() {
+    // Fewer than k survivors is information-theoretically impossible: the
+    // decoder must return an error, never a partially-correct payload.
+    let cfg = FecConfig::for_loss(10, 0.4, 4096);
+    let enc = FecEncoder::new(cfg.clone());
+    let data = b"under-threshold payload".repeat(40);
+    let shards = enc.encode(&data).unwrap();
+    let received: Vec<_> = shards.into_iter().take(9).collect();
+    let dec = FecDecoder::new();
+    assert!(dec.decode(received, &cfg, data.len()).is_err());
 }
 
 #[test]
@@ -237,15 +324,23 @@ fn absolute_resilient_chain_end_to_end() {
     ai_engine.select_model(TrafficModelKind::ShaparakBanking);
     let _morphed_packet = ai_engine.morph_packet(1000, 42);
 
-    // 5. FEC
-    let cfg = FecConfig::for_loss(10, 0.4, 512);
+    // 5. FEC under a real 40% loss (6 of 17 shards dropped, data lane first —
+    //    the most damaging pattern), asserting byte-for-byte recovery.
+    let cfg = FecConfig::for_loss(10, 0.4, 4096);
     let enc = FecEncoder::new(cfg.clone());
     let data = b"end-to-end absolute resilient payload".repeat(20);
     let shards = enc.encode(&data).unwrap();
-    let received = shards.into_iter().skip(1).collect::<Vec<_>>();
+    let drop_count = (cfg.total_shards() as f64 * 0.4).floor() as usize;
+    assert_eq!(drop_count, 6);
+    let received = shards.into_iter().skip(drop_count).collect::<Vec<_>>();
+    assert_eq!(received.len(), cfg.total_shards() - drop_count);
     let dec = FecDecoder::new();
     let decoded = dec.decode(received, &cfg, data.len()).unwrap();
-    assert_eq!(decoded, data);
+    assert_eq!(
+        decoded, data,
+        "end-to-end payload must survive 40% loss byte-for-byte"
+    );
+    assert_eq!(dec.shards_recovered(), drop_count as u64);
 
     // 6. Honeypot
     let honeypot = HoneypotEngine::new();

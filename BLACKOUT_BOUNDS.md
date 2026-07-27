@@ -52,7 +52,9 @@ achieved by:
 ### ConfirmedIsolation — "disciplined waiting, not false hope"
 The system **stops generating high-frequency retry traffic** (battery and network-footprint
 discipline — a retry storm during a blackout is both wasteful and a signal to the censor). It:
-- Preserves **all application state and queued data** locally (encrypted store-and-forward queue).
+- Preserves queued data locally in the bounded, disk-backed store-and-forward queue — up to its
+  configured capacity, after which it evicts oldest-bulk-first and counts the loss. (Not yet
+  encrypted at rest; see §9.) "All application state" is **not** claimed.
 - Continues **low-frequency background probing** (default: one probe per transport every 30 s).
 - Reports **"Reconnecting — international paths appear blocked"** to the UI — **never "Connected."**
 - Does **not** claim it can reach the international internet, because at this moment it cannot.
@@ -191,8 +193,27 @@ A single dropped probe **never** advances past Degraded. This is property-tested
   Already implemented.
 - **`dns_tunnel.rs`** — MasterDnsVPN, VayDNS, NoizDNS variants. Already implemented (2 of 3;
   NoizDNS pending per §6 of the directive).
-- **`store_and_forward.rs`** — persistent encrypted queue, flushed on recovery. **Pending** (§4 of
-  the directive).
+- **`store_and_forward.rs`** — bounded, disk-backed priority queue, flushed on recovery.
+  **Implemented and wired into the live path.** Concretely:
+  - **Capacity bound** — `QueueLimits { max_items, max_bytes, policy }`. On overflow it either
+    rejects the newcomer (`OverflowPolicy::RejectNew`) or evicts the oldest *bulk* item
+    (`OverflowPolicy::EvictOldest`); control-lane items are never evicted for bulk data. There is
+    no unbounded growth path, however long the blackout lasts.
+  - **Disk persistence** — `StoreAndForward::open(path, limits)` appends each accepted item as a
+    JSON line and compacts by temp-file + rename on flush/eviction. This follows the same pattern
+    as the `AETHER_TELEMETRY_SPOOL` disk spool in
+    `control-plane/internal/telemetry/clickhouse.go` (append JSONL on the write path, drain and
+    truncate on reconnect), so both planes behave identically during an outage.
+  - **Crash recovery** — the queue is reloaded from disk at startup, restoring lane order, item IDs
+    and the next-ID watermark. A torn trailing line from a power cut costs that one record, not the
+    queue.
+  - **Live path** — `telemetry::Collector::with_store_and_forward` buffers telemetry recorded while
+    the control plane is detached and replays the backlog on the next `StreamTelemetry` attach.
+    Configured by `AETHER_SUPERVISOR_SPOOL` (+ `_MAX_ITEMS` / `_MAX_BYTES`) in
+    `core-supervisor/src/main.rs`.
+
+  Still **not** claimed: the at-rest payload is not yet sealed with the `antiforgery` crypto
+  primitives — the sealing trait is defined but the queue writes plaintext JSON today.
 - **`out_of_band.rs`** — optional operator-provisioned uplink. **Pending** (§2 of the directive).
 - **`local_mesh.rs`** — peer discovery + ad-hoc gateway. **Pending** (§3 of the directive).
 

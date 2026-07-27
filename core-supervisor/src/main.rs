@@ -15,7 +15,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use aether_supervisor::{
-    core_adapters, grpc, routing, runtime_preflight::RuntimePreflight, telemetry::Collector,
+    core_adapters, grpc, routing,
+    runtime_preflight::RuntimePreflight,
+    store_and_forward::{OverflowPolicy, QueueLimits, StoreAndForward},
+    telemetry::Collector,
     CoreSupervisor,
 };
 
@@ -88,7 +91,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let supervisor = Arc::new(CoreSupervisor::with_default_adapters());
-    let collector = Collector::new();
+
+    // Store-and-forward: telemetry recorded while the control plane is
+    // detached is buffered (bounded) and, when AETHER_SUPERVISOR_SPOOL points
+    // at a path, persisted to disk and reloaded after a crash. Mirrors the Go
+    // control plane's AETHER_TELEMETRY_SPOOL behaviour.
+    let queue = store_and_forward_from_environment();
+    let collector = Collector::with_store_and_forward(queue.clone());
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -107,12 +116,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     tokio::pin!(serve);
     tokio::select! {
-        result = &mut serve => result?,
+        result = &mut serve => {
+            queue.persist();
+            result?
+        },
         _ = tokio::signal::ctrl_c() => {
-            tracing::info!("ctrl-c received; shutting down");
+            // Graceful shutdown: make sure anything still queued is on disk so
+            // the next boot recovers it instead of losing it.
+            queue.persist();
+            tracing::info!(
+                pending = queue.pending(),
+                "ctrl-c received; store-and-forward queue persisted; shutting down"
+            );
         }
     }
     Ok(())
+}
+
+/// Build the store-and-forward queue from the environment.
+///
+/// * `AETHER_SUPERVISOR_SPOOL` — path to the JSONL spool. Unset ⇒ in-memory
+///   only (no disk writes, still bounded).
+/// * `AETHER_SUPERVISOR_SPOOL_MAX_ITEMS` / `..._MAX_BYTES` — capacity bound.
+///
+/// A spool that cannot be opened is a warning, never a boot failure: losing
+/// buffered telemetry must not take the data plane down.
+fn store_and_forward_from_environment() -> Arc<StoreAndForward> {
+    let limits = QueueLimits {
+        max_items: env_usize(
+            "AETHER_SUPERVISOR_SPOOL_MAX_ITEMS",
+            QueueLimits::DEFAULT_MAX_ITEMS,
+        ),
+        max_bytes: env_usize(
+            "AETHER_SUPERVISOR_SPOOL_MAX_BYTES",
+            QueueLimits::DEFAULT_MAX_BYTES,
+        ),
+        policy: OverflowPolicy::EvictOldest,
+    };
+
+    match std::env::var("AETHER_SUPERVISOR_SPOOL") {
+        Ok(path) if !path.trim().is_empty() => match StoreAndForward::open(&path, limits) {
+            Ok(queue) => {
+                tracing::info!(
+                    spool = %path,
+                    recovered = queue.recovered_items(),
+                    max_items = limits.max_items,
+                    max_bytes = limits.max_bytes,
+                    "store-and-forward spool opened; queue recovered from disk"
+                );
+                Arc::new(queue)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    spool = %path,
+                    error = %error,
+                    "store-and-forward spool unavailable; falling back to in-memory queue"
+                );
+                Arc::new(StoreAndForward::with_limits(limits))
+            }
+        },
+        _ => {
+            tracing::info!(
+                max_items = limits.max_items,
+                max_bytes = limits.max_bytes,
+                "store-and-forward queue in-memory (set AETHER_SUPERVISOR_SPOOL to persist)"
+            );
+            Arc::new(StoreAndForward::with_limits(limits))
+        }
+    }
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    match std::env::var(key) {
+        Ok(raw) => match raw.trim().parse::<usize>() {
+            Ok(v) if v > 0 => v,
+            _ => {
+                tracing::warn!(key, raw = %raw, default, "invalid value; using default");
+                default
+            }
+        },
+        Err(_) => default,
+    }
 }
 
 fn supervisor_addr_from_environment() -> Result<SocketAddr, std::io::Error> {
@@ -176,5 +260,42 @@ mod tests {
             assert!(parse_mtls_value(disabled).is_ok_and(|value| !value));
         }
         assert!(parse_mtls_value("sometimes").is_err());
+    }
+
+    #[test]
+    fn env_usize_falls_back_on_garbage() {
+        // Uses a key guaranteed absent so the test is order-independent.
+        assert_eq!(env_usize("AETHER_TEST_ABSENT_KEY_XYZ", 42), 42);
+    }
+
+    #[test]
+    fn spool_disabled_yields_bounded_in_memory_queue() {
+        // No env var set in this test process for the spool path by default.
+        let q = store_and_forward_from_environment();
+        assert!(q.limits().max_items > 0);
+        assert!(q.limits().max_bytes > 0);
+    }
+
+    #[test]
+    fn opened_spool_recovers_queue_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("supervisor-spool.jsonl");
+        let limits = QueueLimits {
+            max_items: 100,
+            max_bytes: 1 << 20,
+            policy: OverflowPolicy::EvictOldest,
+        };
+        {
+            let q = StoreAndForward::open(&path, limits).unwrap();
+            q.try_enqueue(
+                aether_supervisor::store_and_forward::Priority::Control,
+                b"pending-telemetry".to_vec(),
+            )
+            .unwrap();
+            q.persist();
+        }
+        let restarted = StoreAndForward::open(&path, limits).unwrap();
+        assert_eq!(restarted.pending(), 1);
+        assert_eq!(restarted.recovered_items(), 1);
     }
 }

@@ -166,8 +166,12 @@ impl AdvancedIntegration {
         if action.base.bound_reached {
             // At the hard bound (FullIsolation), nothing international works.
             // We do NOT claim connectivity; we DO queue all pending data.
-            self.store_forward
-                .enqueue(Priority::Control, b"queue-reserved".to_vec());
+            // The queue is capacity-bounded: a refusal here is a truthful
+            // "we could not buffer this", counted in QueueStats::total_rejected,
+            // never silent unbounded growth during a long blackout.
+            let _ = self
+                .store_forward
+                .try_enqueue(Priority::Control, b"queue-reserved".to_vec());
         }
 
         // Panic-wipe readiness (device-level OpSec): the engine is armed
@@ -716,7 +720,9 @@ mod tests {
     fn automatic_recovery_flushes_queue() {
         let blackout = BlackoutController::with_full_tier("primary-core");
         let store = Arc::new(StoreAndForward::new());
-        store.enqueue(Priority::Control, b"message".to_vec());
+        store
+            .try_enqueue(Priority::Control, b"message".to_vec())
+            .unwrap();
         let integration = AdvancedIntegration::new(
             blackout,
             TrafficMorpher::with_default_profiles(),
