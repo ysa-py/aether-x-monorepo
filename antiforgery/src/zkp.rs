@@ -404,10 +404,10 @@ mod tests {
     fn expired_and_revoked_credentials_fail_closed() {
         let now_unix = 1_700_000_000;
         let (mut registry, credential, _, _) = registered_credential(now_unix);
-        assert_eq!(
+        assert!(matches!(
             credential.prove_unexpired(now_unix + 120),
             Err(EligibilityProofError::Expired)
-        );
+        ));
 
         let proof = credential.prove_unexpired(now_unix).unwrap();
         assert!(registry.revoke(credential.commitment()));
