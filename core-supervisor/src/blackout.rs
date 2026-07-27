@@ -77,8 +77,9 @@ pub struct BlackoutSignal {
     /// Windowed rate of locally observed TCP `ConnectionReset` errors. This is
     /// a reset candidate, not proof that an on-path censor injected an RST.
     pub tcp_rst_rate: f64,
-    /// Windowed rate of TLS handshakes truncated after ClientHello transmission.
-    /// The source observes an EOF; it does not attribute who closed the flow.
+    /// Windowed rate of TLS handshakes interrupted after ClientHello
+    /// transmission by EOF or reset; the source does not attribute who closed
+    /// the flow.
     pub tls_trunc_rate: f64,
     /// Windowed rate of pinned DNS-anchor responses that disagree with their
     /// expected answer/response code.

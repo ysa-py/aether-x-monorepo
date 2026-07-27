@@ -10,8 +10,8 @@
 //!
 //! * a TCP `ConnectionReset` is an observed reset candidate, **not proof** that
 //!   an on-path censor injected an RST;
-//! * an EOF during a TLS handshake after a ClientHello is an observed TLS
-//!   truncation, **not proof** of who closed the connection; and
+//! * an EOF or TCP reset during a TLS handshake after a ClientHello is an
+//!   observed TLS truncation, **not proof** of who closed the connection; and
 //! * DNS poisoning is reported only when a direct UDP response for an
 //!   operator-pinned hostname contains an unexpected address or response code.
 //!
@@ -479,7 +479,11 @@ impl LiveSignalSource {
             totals.tls_attempts += 1;
             match outcome {
                 TlsProbeOutcome::Success => totals.tls_successes += 1,
-                TlsProbeOutcome::Reset => totals.reset_candidates += 1,
+                TlsProbeOutcome::TcpReset => totals.reset_candidates += 1,
+                TlsProbeOutcome::HandshakeReset => {
+                    totals.reset_candidates += 1;
+                    totals.tls_truncations += 1;
+                }
                 TlsProbeOutcome::Truncated => totals.tls_truncations += 1,
                 TlsProbeOutcome::Failed | TlsProbeOutcome::Timeout => {}
             }
@@ -537,7 +541,12 @@ enum TcpProbeOutcome {
 #[derive(Debug, Clone, Copy)]
 enum TlsProbeOutcome {
     Success,
-    Reset,
+    /// TCP reset before a TLS ClientHello can be sent.
+    TcpReset,
+    /// TCP reset after a TLS ClientHello was sent; this is also a truncated TLS
+    /// handshake, while remaining separately visible as a reset candidate.
+    HandshakeReset,
+    /// EOF after a TLS ClientHello without a TLS close-notify record.
     Truncated,
     Failed,
     Timeout,
@@ -566,7 +575,7 @@ async fn probe_tls(target: &PreparedTlsProbe, probe_timeout: Duration) -> TlsPro
     let stream = match timeout(probe_timeout, TcpStream::connect(target.address)).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionReset => {
-            return TlsProbeOutcome::Reset;
+            return TlsProbeOutcome::TcpReset;
         }
         Ok(Err(_)) => return TlsProbeOutcome::Failed,
         Err(_) => return TlsProbeOutcome::Timeout,
@@ -579,7 +588,7 @@ async fn probe_tls(target: &PreparedTlsProbe, probe_timeout: Duration) -> TlsPro
     {
         Ok(Ok(_stream)) => TlsProbeOutcome::Success,
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionReset => {
-            TlsProbeOutcome::Reset
+            TlsProbeOutcome::HandshakeReset
         }
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
             TlsProbeOutcome::Truncated

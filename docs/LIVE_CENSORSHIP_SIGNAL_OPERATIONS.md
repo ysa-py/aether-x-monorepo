@@ -80,7 +80,7 @@ private anchor, mount the anchor's CA PEM read-only at the configured path.
 | Signal field | Source behaviour | It does **not** prove |
 | --- | --- | --- |
 | `tcp_rst_rate` | Fraction of TCP/TLS attempts that returned local `ConnectionReset` over the rolling window. | That an ISP/censor injected an RST rather than the endpoint/path resetting a connection. |
-| `tls_trunc_rate` | Fraction of verified TLS handshakes that ended with EOF after the ClientHello was sent. | Which actor closed the connection, or a general property of all TLS paths. |
+| `tls_trunc_rate` | Fraction of certificate-verified TLS probes interrupted by EOF or reset after the ClientHello was sent. | Which actor closed the connection, or a general property of all TLS paths. |
 | `dns_anomaly_rate` | Fraction of direct UDP DNS responses whose response code or A/AAAA answers disagree with the pinned anchor. | Poisoning when a resolver merely timed out; timeouts are counted separately as DNS failures. |
 | `international_ip_severed` | True only when every configured international TCP anchor had zero successes across a full window. | Nationwide international routing state. |
 | `dns_resolves_international` | True when at least one configured direct DNS anchor returns an expected answer in a full window. | General international DNS availability. |
