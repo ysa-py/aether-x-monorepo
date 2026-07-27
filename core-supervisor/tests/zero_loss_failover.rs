@@ -339,9 +339,10 @@ fn enterprise_engine_end_to_end_blackout() {
         res_severed.blackout_level,
         aether_supervisor::blackout::IsolationLevel::RoutingSevered
     );
-    // No configured real endpoint exists in this fixture, so the transport race
-    // must not invent a winner or a throughput measurement.
-    assert!(res_severed.race_winner.is_none());
+    // EnterpriseEngine's `race_winner` is its separate Happy-Eyeballs probe
+    // candidate result; the TCP Transport race is covered by real_tcp_connect.
+    assert!(res_severed.race_winner.is_some());
+    // The unconfigured blackout transport tier reports no bonded throughput.
     assert!(res_severed.throughput_multiplier.abs() < f64::EPSILON);
 
     // Full isolation: bound reached, honest reporting (never fake connected)
