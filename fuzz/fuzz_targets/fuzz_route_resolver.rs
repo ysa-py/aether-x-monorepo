@@ -3,7 +3,7 @@
 use libfuzzer_sys::fuzz_target;
 
 // Fuzz the Iran-aware routing engine with arbitrary domain strings and IP
-/// addresses. The engine must never panic and must always return a valid Action.
+// addresses. The engine must never panic and must always return a valid Action.
 fuzz_target!(|data: &[u8]| {
     let domain = std::str::from_utf8(data).unwrap_or("");
     let engine = aether_routing::Engine::new(aether_routing::preset());

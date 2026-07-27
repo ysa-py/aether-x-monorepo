@@ -3,8 +3,8 @@
 use libfuzzer_sys::fuzz_target;
 
 // Fuzz the adaptive TLS fragmentation engine with arbitrary parameters derived
-/// from the fuzz input. The engine must never panic and offsets must stay in
-/// range regardless of input.
+// from the fuzz input. The engine must never panic and offsets must stay in
+// range regardless of input.
 fuzz_target!(|data: &[u8]| {
     if data.len() < 13 {
         return;
