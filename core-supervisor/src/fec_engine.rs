@@ -222,12 +222,13 @@ impl FecDecoder {
                     },
                 });
             }
-            let first_parity_data = parity_shards
-                .get(&config.k)
-                .ok_or(FecError::NotEnoughParity {
-                    missing: 1,
-                    parity: 0,
-                })?;
+            let first_parity_data =
+                parity_shards
+                    .get(&config.k)
+                    .ok_or(FecError::NotEnoughParity {
+                        missing: 1,
+                        parity: 0,
+                    })?;
             let mut recovered = first_parity_data.clone();
             for data in data_shards.values() {
                 for (out, byte) in recovered.iter_mut().zip(data) {
