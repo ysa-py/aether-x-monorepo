@@ -89,9 +89,10 @@ fn mtls_enabled_from_environment() -> Result<bool, std::io::Error> {
 
 fn signer_from_environment() -> Result<token::TokenSigner, std::io::Error> {
     match std::env::var("AETHER_ANTIFORGERY_SIGNING_KEY") {
-        Ok(encoded) => Ok(token::TokenSigner::from_secret_bytes(decode_secret_seed(
-            &encoded,
-        )?)),
+        Ok(encoded) => {
+            let seed = decode_secret_seed(&encoded)?;
+            Ok(token::TokenSigner::from_secret_bytes(&seed))
+        }
         Err(_) if development_mode() => {
             tracing::warn!("AETHER_DEV=true: using an ephemeral anti-forgery signing key");
             Ok(token::TokenSigner::generate())
@@ -113,7 +114,7 @@ fn development_mode() -> bool {
     }
 }
 
-fn decode_secret_seed(encoded: &str) -> Result<[u8; 32], std::io::Error> {
+fn decode_secret_seed(encoded: &str) -> Result<zeroize::Zeroizing<[u8; 32]>, std::io::Error> {
     let value = encoded.trim();
     if value.len() != 64 {
         return Err(std::io::Error::new(
@@ -122,7 +123,7 @@ fn decode_secret_seed(encoded: &str) -> Result<[u8; 32], std::io::Error> {
         ));
     }
 
-    let mut secret = [0_u8; 32];
+    let mut secret = zeroize::Zeroizing::new([0_u8; 32]);
     for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
         let pair = std::str::from_utf8(pair).map_err(|error| {
             std::io::Error::new(

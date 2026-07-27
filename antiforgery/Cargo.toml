@@ -12,7 +12,15 @@ name = "aether_antiforgery"
 path = "src/lib.rs"
 
 [dependencies]
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+# Identity/signature implementation for v4.public PASETO subscription tokens.
+ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
+# PASETO v4.local implementation. Pin exactly so a change to the upstream
+# token implementation is deliberate and re-runs the official vector corpus.
+pasetors = { version = "=0.8.0", default-features = false, features = ["v4"] }
+# Explicitly direct: secret buffers loaded from deployment configuration are
+# zeroized after the signing key copies them.
+zeroize = "1.8"
+subtle = "2.6"
 rand = "0.8"
 sha2 = "0.10"
 hmac = "0.12"

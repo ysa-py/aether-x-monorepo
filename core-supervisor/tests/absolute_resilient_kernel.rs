@@ -173,24 +173,17 @@ fn adaptive_fec_increases_parity_under_loss() {
     assert!(new_cfg.target_loss >= 0.3);
 }
 
-// ── PQC Hybrid Handshake ────────────────────────────────────────────────────
+// ── X25519 key agreement ────────────────────────────────────────────────────
 
 #[test]
-fn pqc_hybrid_handshake_harvest_now_decrypt_later_resistant() {
-    let client = PqcHandshake::from_seed(1);
-    let server = PqcHandshake::from_seed(2);
+fn x25519_key_agreement_returns_the_same_hkdf_session_key() {
+    let client = PqcHandshake::generate().unwrap();
+    let server = PqcHandshake::generate().unwrap();
 
-    let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
-    let mut server_x_pub = [0u8; 32];
-    server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-
-    let (bundle, client_secret) = client
-        .client_handshake(&server_x_pub, &server_ml_pub)
-        .unwrap();
+    let (bundle, client_secret) = client.client_handshake(&server.public_key(), &[]).unwrap();
     let server_secret = server.server_handshake(&bundle).unwrap();
 
     assert_eq!(client_secret, server_secret);
-    // Hybrid secret is HKDF(X25519||ML-KEM) – 32 bytes, not just X25519
     assert_eq!(client_secret.len(), 32);
 }
 
@@ -287,15 +280,11 @@ fn absolute_resilient_chain_end_to_end() {
     // Simulate full flow: client connects → PQC handshake → OS polymorphism → SockOps zero-copy →
     // AI morph → FEC encode → 40% loss → FEC decode → Honeypot check → ZKP auth
 
-    // 1. PQC
-    let client = PqcHandshake::from_seed(10);
-    let server = PqcHandshake::from_seed(20);
-    let (server_x_pub_bytes, server_ml_pub) = server.public_keys();
-    let mut server_x_pub = [0u8; 32];
-    server_x_pub.copy_from_slice(&server_x_pub_bytes[0..32]);
-    let (bundle, _) = client
-        .client_handshake(&server_x_pub, &server_ml_pub)
-        .unwrap();
+    // 1. Real X25519 + HKDF session-key agreement. ML-KEM is intentionally
+    // not claimed here until an independently audited implementation is wired.
+    let client = PqcHandshake::generate().unwrap();
+    let server = PqcHandshake::generate().unwrap();
+    let (bundle, _) = client.client_handshake(&server.public_key(), &[]).unwrap();
     let _ = server.server_handshake(&bundle).unwrap();
 
     // 2. OS polymorphism

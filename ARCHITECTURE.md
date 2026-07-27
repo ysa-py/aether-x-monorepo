@@ -160,10 +160,10 @@ hand-built Rust TLS path once its value is proven on real traffic.
 The user-facing panel must never trust client-reported expiry/quota. Four
 composable primitives enforce this, each unit- and integration-tested:
 
-- **Ed25519 subscription tokens** (`token`): the authoritative `bytes_total`,
-  `bytes_used`, `expires_unix` are signed by the server key. A client altering
-  any field invalidates the signature — verified by `scenario.rs` ("forged
-  quota is rejected").
+- **PASETO v4.public Ed25519 subscription tokens** (`token`): the authoritative
+  `bytes_total`, `bytes_used`, `expires_unix` are signed by the server key. A
+  client altering any field invalidates the signature — verified by
+  `scenario.rs` ("forged quota is rejected").
 - **Hash-chained audit log** (`audit`): every subscription mutation appends a
   record whose hash chains to the previous (`SHA-256(seq||prev||payload)`).
   Any retroactive edit or deletion is cryptographically detectable. The log

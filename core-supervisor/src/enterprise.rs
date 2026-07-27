@@ -126,7 +126,15 @@ impl EnterpriseEngine {
             os_poly: Arc::new(OsPolymorphismEngine::new()),
             active_defense: Arc::new(ActiveDefenseEngine::new()),
             zkp_verifier: Arc::new(ZkpVerifier::new([0u8; 32])),
-            pqc_handshake: RwLock::new(Some(PqcHandshake::from_seed(1))),
+            // A real X25519 identity is generated from the OS CSPRNG only
+            // when the optional key-agreement component is enabled. There is
+            // no deterministic/fabricated PQC fallback when randomness is
+            // unavailable; the absent entry is observable to the owner.
+            pqc_handshake: RwLock::new(if config.enable_pqc {
+                PqcHandshake::generate().ok()
+            } else {
+                None
+            }),
             adaptive_fec: Arc::new(AdaptiveFec::new(10, 1024)),
             cni_detector: Arc::new(CniDetector::new()),
             started_at: Instant::now(),

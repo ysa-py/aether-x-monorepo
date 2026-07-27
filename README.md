@@ -11,7 +11,7 @@ Iranian telecommunications infrastructure.
 |-------|----------|----------------|
 | **Data Plane** — `core-supervisor/` | Rust | Process isolation, cgroup limits, protocol hot-swap, live telemetry, fragmentation, cover traffic, **local adaptive decider** |
 | **Routing** — `routing/` | Rust | Iran-aware Direct/Proxy/Block engine (domain + CIDR), JSON rule sets, auto-update trait |
-| **Anti-Forgery Core** — `antiforgery/` | Rust | Ed25519-signed subscription tokens, tamper-evident audit log (chain + Merkle inclusion/consistency proofs), replay protection, device limiting |
+| **Anti-Forgery Core** — `antiforgery/` | Rust | PASETO v4.public subscription tokens signed with Ed25519, tamper-evident audit log (chain + Merkle inclusion/consistency proofs), replay protection, device limiting |
 | **Anti-Forgery Service** — `antiforgery-server/` | Rust | gRPC bridge exposing the anti-forgery core to the control plane (no crypto reimplementation in Go) |
 | **Control Plane** — `control-plane/` | Go | User/quota/expiry, cluster orchestration, REST+gRPC API, **embedded MCP server**, telemetry aggregation, **per-ISP feature store** |
 | **Dashboard** — `aether-x-dashboard/` | Next.js 15 / React 19 / TS | Enterprise NOC UI: Bento-grid, SVG topology + particle stream, Merkle viewer, RTL/LTR i18n |
