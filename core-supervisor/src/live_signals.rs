@@ -811,7 +811,7 @@ mod tests {
 
     use rustls::pki_types::PrivateKeyDer;
     use rustls::ServerConfig;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio_rustls::TlsAcceptor;
 
@@ -896,11 +896,15 @@ mod tests {
         tokio::spawn(async move {
             for _ in 0..connections {
                 let (mut stream, _) = listener.accept().await.unwrap();
-                let mut client_hello = [0_u8; 4_096];
-                let _ = stream.read(&mut client_hello).await;
-                // Dropping after consuming the ClientHello produces a real
-                // local EOF during the client's TLS handshake without a TLS
-                // close-notify record.
+                let mut header = [0_u8; 5];
+                stream.read_exact(&mut header).await.unwrap();
+                let length = usize::from(u16::from_be_bytes([header[3], header[4]]));
+                let mut client_hello = vec![0_u8; length];
+                stream.read_exact(&mut client_hello).await.unwrap();
+                // Consume the complete first ClientHello record, then send a
+                // TCP FIN without a TLS close-notify. The client must observe
+                // an actual EOF while its TLS handshake is in progress.
+                stream.shutdown().await.unwrap();
             }
         });
         address
