@@ -61,7 +61,7 @@
       "platforms": ["ios", "android", "windows", "macos"],
       "scheme": null,
       "status": "verify-before-ship",
-      "note": "Supports Clash/sing-box/V2Ray import; no confirmed custom scheme",
+      "note": "Import behavior and any custom scheme require an external application test before shipping.",
       "icon": "🛡️"
     },
     {
@@ -79,7 +79,7 @@
       "platforms": ["ios"],
       "scheme": null,
       "status": "verify-before-ship",
-      "note": "Check current App Store listing",
+      "note": "Availability and import behavior require an external application test before shipping.",
       "icon": "🎵"
     },
     {
@@ -88,7 +88,7 @@
       "platforms": ["android", "windows", "macos", "linux"],
       "scheme": null,
       "status": "verify-before-ship",
-      "note": "Accepts manual subscription-URL paste",
+      "note": "Manual import behavior requires an external application test before shipping.",
       "icon": "📦"
     }
   ]

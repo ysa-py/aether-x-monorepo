@@ -69,8 +69,9 @@ impl TrafficProfile {
     }
 }
 
-/// The traffic morpher. Picks a profile, morphs packets, and rotates JA4
-/// fingerprints. Thread-safe; the active profile can be swapped at runtime.
+/// The traffic-shaping model. Picks a profile and calculates candidate length,
+/// timing, and TLS-fingerprint values; it does not morph live packets.
+/// Thread-safe; the active profile can be swapped at runtime.
 pub struct TrafficMorpher {
     profiles: Vec<TrafficProfile>,
     active: RwLock<usize>,
