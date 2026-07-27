@@ -43,9 +43,20 @@ impl X25519Keypair {
 
     #[must_use]
     pub fn ecdh(&self, peer_public: &[u8; 32]) -> [u8; 32] {
+        // This deterministic test implementation must preserve the essential
+        // X25519 invariant: each peer derives the same value. Hashing a
+        // private key and peer public key was order-dependent, which made the
+        // client and server produce unrelated "shared" secrets. Bind a domain
+        // separator to a canonical ordering of the two public keys instead.
+        let (first, second) = if self.public <= *peer_public {
+            (&self.public, peer_public)
+        } else {
+            (peer_public, &self.public)
+        };
         let mut hasher = Sha256::new();
-        hasher.update(self.private);
-        hasher.update(peer_public);
+        hasher.update(b"aether-x mock x25519 shared secret v1");
+        hasher.update(first);
+        hasher.update(second);
         let h = hasher.finalize();
         let mut out = [0u8; 32];
         out.copy_from_slice(&h[0..32]);
@@ -99,9 +110,12 @@ impl MlKem768Keypair {
 
     #[must_use]
     pub fn decapsulate(&self, _ciphertext: &[u8]) -> [u8; 32] {
+        // Keep the deterministic stand-in symmetric with `encapsulate`.
+        // Real ML-KEM derives this from the ciphertext and private key; the
+        // mock's public-key-derived secret is only for protocol tests.
         let mut hasher = Sha256::new();
         hasher.update(&self.public);
-        hasher.update(b"ml-kem-decaps");
+        hasher.update(b"ml-kem-encaps");
         let h = hasher.finalize();
         let mut shared = [0u8; 32];
         shared.copy_from_slice(&h[0..32]);
@@ -238,7 +252,7 @@ impl PqcHandshake {
             let x_secret = temp_kp.ecdh(server_x_pub);
             let mut hasher = Sha256::new();
             hasher.update(server_mlkem_pub);
-            hasher.update(b"ml-kem-decaps");
+            hasher.update(b"ml-kem-encaps");
             let decap_mock = hasher.finalize();
             let mut mlkem_secret = [0u8; 32];
             mlkem_secret.copy_from_slice(&decap_mock[0..32]);
@@ -261,14 +275,13 @@ impl PqcHandshake {
         // Find unused, not expired (>5 min)
         let now = Instant::now();
         pipeline.retain(|e| !e.used && now.duration_since(e.created_at) < Duration::from_secs(300));
-        for entry in pipeline.iter_mut() {
-            if !entry.used {
-                entry.used = true;
-                self.zero_rtt_hits.fetch_add(1, Ordering::Relaxed);
-                return Some(entry.clone());
-            }
-        }
-        None
+        // A consumed precomputed entry must leave the queue. Retaining it as
+        // `used` made pipeline_len() report stale keys and risks accidental
+        // re-use if this implementation later changes its filtering logic.
+        let mut entry = pipeline.pop_front()?;
+        entry.used = true;
+        self.zero_rtt_hits.fetch_add(1, Ordering::Relaxed);
+        Some(entry)
     }
 
     pub fn client_handshake(
@@ -300,7 +313,7 @@ impl PqcHandshake {
         let _ = dummy_kp.encapsulate(server_mlkem_pub);
         let mut hasher = Sha256::new();
         hasher.update(server_mlkem_pub);
-        hasher.update(b"ml-kem-decaps");
+        hasher.update(b"ml-kem-encaps");
         let decap_mock = hasher.finalize();
         let mut mlkem_secret_deterministic = [0u8; 32];
         mlkem_secret_deterministic.copy_from_slice(&decap_mock[0..32]);

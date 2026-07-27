@@ -291,39 +291,37 @@ pub(crate) mod merkle_bridge {
                     arr
                 })
                 .collect();
-            // Build padded tree levels for proof extraction.
-            let mut cur = leaf_hashes.clone();
-            let mut levels: Vec<Vec<[u8; 32]>> = vec![cur.clone()];
-            while cur.len() > 1 {
-                if cur.len() % 2 == 1 {
-                    // The loop condition implies a non-empty level, but
-                    // malformed in-memory state must result in no proof rather
-                    // than a panic.
-                    let last = cur.last().copied()?;
-                    cur.push(last);
-                    levels.last_mut()?.push(last);
+            // The tree head uses RFC 6962's largest-power-of-two split, not
+            // duplicate-last padding. Build the proof with that same shape so
+            // odd-sized trees verify against their advertised forest root.
+            fn collect_inclusion_steps(
+                hashes: &[[u8; 32]],
+                first: usize,
+                last: usize,
+                index: usize,
+                steps: &mut Vec<ProofStep>,
+            ) {
+                if last - first == 1 {
+                    return;
                 }
-                let mut next = Vec::with_capacity(cur.len() / 2);
-                for pair in cur.chunks(2) {
-                    next.push(parent_hash(&pair[0], &pair[1]));
+                let split = first + largest_pow2_lt(last - first);
+                if index < split {
+                    collect_inclusion_steps(hashes, first, split, index, steps);
+                    steps.push(ProofStep {
+                        sibling: subtree_hash(hashes, split, last),
+                        is_right_sibling: true,
+                    });
+                } else {
+                    collect_inclusion_steps(hashes, split, last, index, steps);
+                    steps.push(ProofStep {
+                        sibling: subtree_hash(hashes, first, split),
+                        is_right_sibling: false,
+                    });
                 }
-                cur = next;
-                levels.push(cur.clone());
             }
-            // Walk levels to extract sibling path.
+
             let mut steps = Vec::new();
-            let mut idx = index;
-            for level in 0..levels.len().saturating_sub(1) {
-                let lvl = &levels[level];
-                let sib_idx = idx ^ 1;
-                let sibling = lvl[sib_idx];
-                let is_right = idx % 2 == 0;
-                steps.push(ProofStep {
-                    sibling,
-                    is_right_sibling: is_right,
-                });
-                idx >>= 1;
-            }
+            collect_inclusion_steps(&leaf_hashes, 0, leaf_hashes.len(), index, &mut steps);
             Some(InclusionProof {
                 index: index as u64,
                 steps,

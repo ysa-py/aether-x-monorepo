@@ -33,7 +33,9 @@ impl LoopbackBuffer {
     pub fn new(capacity: usize) -> Self {
         Self {
             buffer: RwLock::new(VecDeque::with_capacity(capacity)),
-            capacity: capacity.max(16),
+            // Honour bounded caller capacity; tests and constrained devices
+            // legitimately use a very small replay window.
+            capacity: capacity.max(1),
             next_seq: AtomicU64::new(1),
             total_buffered: AtomicU64::new(0),
             total_acked: AtomicU64::new(0),

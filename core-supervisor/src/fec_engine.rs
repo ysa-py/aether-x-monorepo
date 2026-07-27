@@ -120,22 +120,22 @@ impl FecEncoder {
             });
         }
 
-        // Parity shards: simple XOR for first parity, then rotated XOR for others (simulating RS)
-        // Real RS would use GF(256) matrix; here XOR provides recovery for up to m losses if pattern allows
-        // For testability we use more robust: each parity = XOR of all data shards rotated by parity index
-        for p in 0..self.config.m {
-            let mut parity = vec![0u8; shard_len];
-            for (di, shard) in shards.iter().take(self.config.k).enumerate() {
-                for (j, &b) in shard.data.iter().enumerate() {
-                    // Rotate contribution by parity index + data index for diversity
-                    let contrib = b.wrapping_add(((p + di) % 256) as u8);
-                    parity[j] ^= contrib;
-                }
+        // The pure-Rust fallback intentionally has one recoverable equation:
+        // XOR of all data shards. A single missing data shard can therefore be
+        // reconstructed exactly. Multiple independent repair equations require
+        // a real Reed-Solomon implementation and must fail closed rather than
+        // returning corrupted payload bytes.
+        let mut parity = vec![0u8; shard_len];
+        for shard in shards.iter().take(self.config.k) {
+            for (out, byte) in parity.iter_mut().zip(&shard.data) {
+                *out ^= byte;
             }
+        }
+        for p in 0..self.config.m {
             shards.push(Shard {
                 index: self.config.k + p,
                 is_parity: true,
-                data: parity,
+                data: parity.clone(),
             });
         }
 
@@ -209,48 +209,33 @@ impl FecDecoder {
                 });
             }
 
-            // Reconstruct each missing via brute force: try to reverse parity formula
-            // For our simple XOR scheme, we can only guarantee recovery of 1 missing with 1 parity if we know the construction
-            // Implement general: for each missing, XOR all other data + parity[0] and adjust
-            // This is simplified – real RS would solve linear system
-
-            // For testability, we implement recovery for up to m losses using parity[0] as pure XOR
-            // Let's enforce first parity is pure XOR (without rotation) for recovery – but our encoder uses rotated XOR, so we need to adjust decoding logic
-            // Instead, we will attempt heuristic: if we have parity shards, we can reconstruct by trying to find data that satisfies parity equation
-
-            // Simplified approach: if exactly 1 data shard missing and we have at least 1 parity, we can reconstruct by XORing all other data shards and parity corrected for rotation
-            // For demo, we will store original data length and attempt to recover by using first data shard as reference
-
-            // Because our encoder's parity is deterministic, we can reconstruct by simulation: we know parity = XOR_i(data_i + (p+i)%256)
-            // So if we have all data except one (say index X), we can compute missing as:
-            // parity[0][j] = XOR_i(data_i[j] + i) => solve for missing
-
-            // Implement for all missing using first parity:
-            if let Some((_, first_parity_data)) = parity_shards.iter().next() {
-                for &missing_idx in &missing_data {
-                    let mut recovered = vec![0u8; first_parity_data.len()];
-                    // Start with parity data
-                    recovered.copy_from_slice(first_parity_data);
-                    // XOR out other data shards contributions
-                    for (i, data) in &data_shards {
-                        for (j, &b) in data.iter().enumerate() {
-                            let contrib = b.wrapping_add((*i % 256) as u8);
-                            recovered[j] ^= contrib;
-                        }
-                    }
-                    // Also need to XOR parity's own rotation? Actually our parity includes rotation per data index already, so to get missing we need to reverse:
-                    // parity[j] = XOR_i(data_i[j] + i)
-                    // So missing_data = parity XOR (XOR_{i!=missing} (data_i + i)) - missing_index
-                    // So:
-                    let mut temp = recovered;
-                    for j in 0..temp.len() {
-                        // Add back missing index rotation subtraction
-                        temp[j] = temp[j].wrapping_sub((missing_idx % 256) as u8);
-                    }
-                    data_shards.insert(missing_idx, temp);
-                    self.recovered_shards.fetch_add(1, Ordering::Relaxed);
+            // The fallback encoder emits one independent XOR equation, so it
+            // can safely recover exactly one missing shard. Do not pretend that
+            // duplicated parity symbols can recover multiple missing shards.
+            if missing_data.len() != 1 {
+                return Err(FecError::NotEnoughParity {
+                    missing: missing_data.len(),
+                    parity: if parity_shards.contains_key(&config.k) {
+                        1
+                    } else {
+                        0
+                    },
+                });
+            }
+            let first_parity_data = parity_shards
+                .get(&config.k)
+                .ok_or(FecError::NotEnoughParity {
+                    missing: 1,
+                    parity: 0,
+                })?;
+            let mut recovered = first_parity_data.clone();
+            for data in data_shards.values() {
+                for (out, byte) in recovered.iter_mut().zip(data) {
+                    *out ^= byte;
                 }
             }
+            data_shards.insert(missing_data[0], recovered);
+            self.recovered_shards.fetch_add(1, Ordering::Relaxed);
         }
 
         // Now we should have all k data shards
@@ -309,7 +294,13 @@ impl AdaptiveFec {
 
         // Adjust config if loss increased significantly
         let mut cfg = self.config.write();
-        let target = (*ewma * 1.2).clamp(0.05, 0.5); // add 20% margin
+        // Never reduce redundancy in response to a fresh high-loss sample.
+        // The direct sample prevents a heavily smoothed EWMA from masking a
+        // sudden outage, while the current target avoids churn on recovery.
+        let target = (*ewma * 1.2)
+            .max(loss.clamp(0.0, 0.5))
+            .max(cfg.target_loss)
+            .clamp(0.05, 0.5);
         let new_m = ((cfg.k as f64 * target / (1.0 - target)).ceil() as usize).max(1);
         if new_m != cfg.m {
             cfg.m = new_m;
